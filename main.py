@@ -1,5 +1,6 @@
 import sys
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -8,17 +9,17 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QFileDialog,
 )
+
+
 def open_file():
     file_path, _ = QFileDialog.getOpenFileName(
-        None,
-        "Open Image",
-        "",
-        "Image Files (*.png *.jpg *.jpeg *.bmp)",
+        None, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
     )
     if file_path:
-        print(f"Selected file: {file_path}")
-
-
+        pixmap = QPixmap(file_path)
+        label.setPixmap(
+            pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        )
 app = QApplication(sys.argv)
 
 window = QWidget()

@@ -28,7 +28,9 @@ def update_display(img):
     bytes_per_line = ch * w
     q_img = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
     pixmap = QPixmap.fromImage(q_img)
-    scaled = pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    scaled = pixmap.scaled(
+        800, 500, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+    )
     label.setPixmap(scaled)
 
 
@@ -44,14 +46,17 @@ def open_file():
         print(f"Failed to load image: {file_path}")
         return
     current_image = img
+    brightness_slider.setValue(0)
+    contrast_slider.setValue(100)
     update_display(current_image)
 
 
-def adjust_brightness(value):
+def apply_adjustments():
     if current_image is None:
         return
-    # value is in [-100, 100]; use as beta for brightness
-    adjusted = cv2.convertScaleAbs(current_image, alpha=1.0, beta=int(value))
+    brightness = brightness_slider.value()
+    contrast = contrast_slider.value() / 100.0
+    adjusted = cv2.convertScaleAbs(current_image, alpha=contrast, beta=int(brightness))
     update_display(adjusted)
 
 
@@ -61,10 +66,9 @@ window = QWidget()
 window.setWindowTitle("RawStudio")
 window.resize(1000, 650)
 window.setStyleSheet("background-color: #1e1e1e;")
-
 layout = QVBoxLayout()
 
-label = QLabel("RawStudio")
+label = QLabel("RawStudio Canvas")
 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 label.setStyleSheet("color: #ffffff; font-size: 16px;")
 label.setFixedSize(800, 500)
@@ -78,10 +82,18 @@ open_button.clicked.connect(open_file)
 brightness_slider = QSlider(Qt.Orientation.Horizontal)
 brightness_slider.setRange(-100, 100)
 brightness_slider.setValue(0)
-brightness_slider.valueChanged.connect(adjust_brightness)
+brightness_slider.valueChanged.connect(apply_adjustments)
+
+contrast_slider = QSlider(Qt.Orientation.Horizontal)
+contrast_slider.setRange(10, 300)
+contrast_slider.setValue(100)
+contrast_slider.valueChanged.connect(apply_adjustments)
 
 controls_layout.addWidget(open_button)
+controls_layout.addWidget(QLabel("Brightness:"))
 controls_layout.addWidget(brightness_slider)
+controls_layout.addWidget(QLabel("Contrast:"))
+controls_layout.addWidget(contrast_slider)
 
 layout.addWidget(label)
 layout.addLayout(controls_layout)
@@ -90,5 +102,3 @@ window.setLayout(layout)
 window.show()
 
 sys.exit(app.exec())
-window.show()
-

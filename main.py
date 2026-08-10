@@ -1,6 +1,12 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
-
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 app = QApplication(sys.argv)
 
 window = QWidget()
@@ -11,12 +17,18 @@ window.setStyleSheet("background-color: #1e1e1e;")
 layout = QVBoxLayout()
 
 label = QLabel("RawStudio")
-label.setStyleSheet("color: #ffffff; fontize: 16px;")
+label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+label.setStyleSheet("color: #ffffff; font-size: 16px;")
 
+
+open_button = QPushButton("Open Image")
+open_button.setStyleSheet(
+    "background-color: #333333; color: #ffffff; padding: 8px;"
+)
 layout.addWidget(label)
-window.setLayout(layout)
+layout.addWidget(open_button)
 
+window.setLayout(layout)
 window.show()
 
 sys.exit(app.exec())
-

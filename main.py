@@ -1,5 +1,4 @@
 import sys
-
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt
@@ -17,12 +16,12 @@ from PyQt6.QtWidgets import (
 )
 
 current_image = None
+processed_image = None
 
 
 def update_display(img):
     if img is None:
         return
-
     if len(img.shape) == 2:
         rgb_img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     else:
@@ -30,15 +29,19 @@ def update_display(img):
 
     h, w, ch = rgb_img.shape
     bytes_per_line = ch * w
-    q_img = QImage(rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+    q_img = QImage(
+        rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888
+    )
     pixmap = QPixmap.fromImage(q_img)
-    label.setPixmap(pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio))
+    label.setPixmap(
+        pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+    )
 
 
 def open_file():
     global current_image
     file_path, _ = QFileDialog.getOpenFileName(
-        window, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp)"
+        None, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
     )
     if file_path:
         img = cv2.imread(file_path)
@@ -50,11 +53,25 @@ def open_file():
             blur_slider.setValue(0)
             sharpen_slider.setValue(0)
             grayscale_checkbox.setChecked(False)
-            update_display(current_image)
+            apply_adjustments()
+
+
+def save_file():
+    global processed_image
+    if processed_image is None:
+        return
+    file_path, _ = QFileDialog.getSaveFileName(
+        None,
+        "Save Image",
+        "",
+        "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;Bitmap (*.bmp)",
+    )
+    if file_path:
+        cv2.imwrite(file_path, processed_image)
 
 
 def apply_adjustments():
-    global current_image
+    global current_image, processed_image
     if current_image is None:
         return
 
@@ -64,7 +81,9 @@ def apply_adjustments():
     blur_val = blur_slider.value()
     sharpen_val = sharpen_slider.value()
 
-    adjusted = cv2.convertScaleAbs(current_image, alpha=contrast, beta=brightness)
+    adjusted = cv2.convertScaleAbs(
+        current_image, alpha=contrast, beta=brightness
+    )
 
     if sat_scale != 1.0:
         hsv = cv2.cvtColor(adjusted, cv2.COLOR_BGR2HSV).astype(np.float32)
@@ -78,12 +97,15 @@ def apply_adjustments():
     if sharpen_val > 0:
         blurred = cv2.GaussianBlur(adjusted, (0, 0), 3)
         strength = sharpen_val * 0.2
-        adjusted = cv2.addWeighted(adjusted, 1.0 + strength, blurred, -strength, 0)
+        adjusted = cv2.addWeighted(
+            adjusted, 1.0 + strength, blurred, -strength, 0
+        )
 
     if grayscale_checkbox.isChecked():
         adjusted = cv2.cvtColor(adjusted, cv2.COLOR_BGR2GRAY)
 
-    update_display(adjusted)
+    processed_image = adjusted
+    update_display(processed_image)
 
 
 if __name__ == "__main__":
@@ -98,6 +120,7 @@ if __name__ == "__main__":
     label = QLabel("RawStudio Canvas")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setStyleSheet("color: #ffffff; font-size: 16px;")
+
     controls_layout = QHBoxLayout()
 
     open_button = QPushButton("Open Image")
@@ -105,6 +128,12 @@ if __name__ == "__main__":
         "background-color: #333333; color: #ffffff; padding: 8px;"
     )
     open_button.clicked.connect(open_file)
+
+    save_button = QPushButton("Save Image")
+    save_button.setStyleSheet(
+        "background-color: #0e639c; color: #ffffff; padding: 8px;"
+    )
+    save_button.clicked.connect(save_file)
 
     brightness_slider = QSlider(Qt.Orientation.Horizontal)
     brightness_slider.setRange(-100, 100)
@@ -134,7 +163,9 @@ if __name__ == "__main__":
     grayscale_checkbox = QCheckBox("Grayscale")
     grayscale_checkbox.setStyleSheet("color: #ffffff;")
     grayscale_checkbox.stateChanged.connect(apply_adjustments)
+
     controls_layout.addWidget(open_button)
+    controls_layout.addWidget(save_button)
     controls_layout.addWidget(QLabel("Brightness:"))
     controls_layout.addWidget(brightness_slider)
     controls_layout.addWidget(QLabel("Contrast:"))
@@ -146,6 +177,7 @@ if __name__ == "__main__":
     controls_layout.addWidget(QLabel("Sharpen:"))
     controls_layout.addWidget(sharpen_slider)
     controls_layout.addWidget(grayscale_checkbox)
+
     layout.addWidget(label)
     layout.addLayout(controls_layout)
 

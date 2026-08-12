@@ -1,22 +1,24 @@
 import sys
+
 import cv2
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QWidget,
+    QCheckBox,
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
-    QCheckBox,
     QVBoxLayout,
-    QHBoxLayout,
-    QFileDialog,
+    QWidget,
 )
 
 current_image = None
 processed_image = None
+rotation_angle = 0
 
 
 def update_display(img):
@@ -47,13 +49,7 @@ def open_file():
         img = cv2.imread(file_path)
         if img is not None:
             current_image = img
-            brightness_slider.setValue(0)
-            contrast_slider.setValue(100)
-            saturation_slider.setValue(100)
-            blur_slider.setValue(0)
-            sharpen_slider.setValue(0)
-            grayscale_checkbox.setChecked(False)
-            apply_adjustments()
+            reset_controls()
 
 
 def save_file():
@@ -70,6 +66,24 @@ def save_file():
         cv2.imwrite(file_path, processed_image)
 
 
+def reset_controls():
+    global rotation_angle
+    rotation_angle = 0
+    brightness_slider.setValue(0)
+    contrast_slider.setValue(100)
+    saturation_slider.setValue(100)
+    blur_slider.setValue(0)
+    sharpen_slider.setValue(0)
+    grayscale_checkbox.setChecked(False)
+    apply_adjustments()
+
+
+def rotate_image():
+    global rotation_angle
+    rotation_angle = (rotation_angle + 90) % 360
+    apply_adjustments()
+
+
 def apply_adjustments():
     global current_image, processed_image
     if current_image is None:
@@ -81,8 +95,17 @@ def apply_adjustments():
     blur_val = blur_slider.value()
     sharpen_val = sharpen_slider.value()
 
+    adjusted = current_image.copy()
+
+    if rotation_angle == 90:
+        adjusted = cv2.rotate(adjusted, cv2.ROTATE_90_CLOCKWISE)
+    elif rotation_angle == 180:
+        adjusted = cv2.rotate(adjusted, cv2.ROTATE_180)
+    elif rotation_angle == 270:
+        adjusted = cv2.rotate(adjusted, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
     adjusted = cv2.convertScaleAbs(
-        current_image, alpha=contrast, beta=brightness
+        adjusted, alpha=contrast, beta=brightness
     )
 
     if sat_scale != 1.0:
@@ -113,7 +136,7 @@ if __name__ == "__main__":
 
     window = QWidget()
     window.setWindowTitle("RawStudio")
-    window.resize(1200, 650)
+    window.resize(1300, 650)
     window.setStyleSheet("background-color: #1e1e1e;")
     layout = QVBoxLayout()
 
@@ -134,6 +157,18 @@ if __name__ == "__main__":
         "background-color: #0e639c; color: #ffffff; padding: 8px;"
     )
     save_button.clicked.connect(save_file)
+
+    rotate_button = QPushButton("Rotate 90°")
+    rotate_button.setStyleSheet(
+        "background-color: #333333; color: #ffffff; padding: 8px;"
+    )
+    rotate_button.clicked.connect(rotate_image)
+
+    reset_button = QPushButton("Reset")
+    reset_button.setStyleSheet(
+        "background-color: #8b0000; color: #ffffff; padding: 8px;"
+    )
+    reset_button.clicked.connect(reset_controls)
 
     brightness_slider = QSlider(Qt.Orientation.Horizontal)
     brightness_slider.setRange(-100, 100)
@@ -166,6 +201,8 @@ if __name__ == "__main__":
 
     controls_layout.addWidget(open_button)
     controls_layout.addWidget(save_button)
+    controls_layout.addWidget(rotate_button)
+    controls_layout.addWidget(reset_button)
     controls_layout.addWidget(QLabel("Brightness:"))
     controls_layout.addWidget(brightness_slider)
     controls_layout.addWidget(QLabel("Contrast:"))

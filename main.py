@@ -74,6 +74,8 @@ def reset_controls():
     saturation_slider.setValue(100)
     blur_slider.setValue(0)
     sharpen_slider.setValue(0)
+    flip_h_checkbox.setChecked(False)
+    flip_v_checkbox.setChecked(False)
     grayscale_checkbox.setChecked(False)
     apply_adjustments()
 
@@ -103,6 +105,13 @@ def apply_adjustments():
         adjusted = cv2.rotate(adjusted, cv2.ROTATE_180)
     elif rotation_angle == 270:
         adjusted = cv2.rotate(adjusted, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+    if flip_h_checkbox.isChecked() and flip_v_checkbox.isChecked():
+        adjusted = cv2.flip(adjusted, -1)
+    elif flip_h_checkbox.isChecked():
+        adjusted = cv2.flip(adjusted, 1)
+    elif flip_v_checkbox.isChecked():
+        adjusted = cv2.flip(adjusted, 0)
 
     adjusted = cv2.convertScaleAbs(
         adjusted, alpha=contrast, beta=brightness
@@ -195,6 +204,14 @@ if __name__ == "__main__":
     sharpen_slider.setValue(0)
     sharpen_slider.valueChanged.connect(apply_adjustments)
 
+    flip_h_checkbox = QCheckBox("Flip H")
+    flip_h_checkbox.setStyleSheet("color: #ffffff;")
+    flip_h_checkbox.stateChanged.connect(apply_adjustments)
+
+    flip_v_checkbox = QCheckBox("Flip V")
+    flip_v_checkbox.setStyleSheet("color: #ffffff;")
+    flip_v_checkbox.stateChanged.connect(apply_adjustments)
+
     grayscale_checkbox = QCheckBox("Grayscale")
     grayscale_checkbox.setStyleSheet("color: #ffffff;")
     grayscale_checkbox.stateChanged.connect(apply_adjustments)
@@ -213,6 +230,8 @@ if __name__ == "__main__":
     controls_layout.addWidget(blur_slider)
     controls_layout.addWidget(QLabel("Sharpen:"))
     controls_layout.addWidget(sharpen_slider)
+    controls_layout.addWidget(flip_h_checkbox)
+    controls_layout.addWidget(flip_v_checkbox)
     controls_layout.addWidget(grayscale_checkbox)
 
     layout.addWidget(label)

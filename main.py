@@ -69,6 +69,7 @@ def reset_controls():
     global rotation_angle
     rotation_angle = 0
     sliders = [
+        exposure_slider,
         brightness_slider,
         contrast_slider,
         saturation_slider,
@@ -81,6 +82,7 @@ def reset_controls():
     checkboxes = [flip_h_checkbox, flip_v_checkbox, grayscale_checkbox]
     for widget in sliders + checkboxes:
         widget.blockSignals(True)
+    exposure_slider.setValue(0)
     brightness_slider.setValue(0)
     contrast_slider.setValue(100)
     saturation_slider.setValue(100)
@@ -108,6 +110,7 @@ def apply_adjustments():
     if current_image is None:
         return
 
+    exposure_val = exposure_slider.value()
     brightness = brightness_slider.value()
     contrast = contrast_slider.value() / 100.0
     sat_scale = saturation_slider.value() / 100.0
@@ -132,6 +135,14 @@ def apply_adjustments():
         adjusted = cv2.flip(adjusted, 1)
     elif flip_v_checkbox.isChecked():
         adjusted = cv2.flip(adjusted, 0)
+
+    if exposure_val != 0:
+        gamma = 2.0 ** (exposure_val / 50.0)
+        inv_gamma = 1.0 / gamma
+        lut = np.array(
+            [((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]
+        ).astype("uint8")
+        adjusted = cv2.LUT(adjusted, lut)
 
     adjusted = cv2.convertScaleAbs(adjusted, alpha=contrast, beta=brightness)
 
@@ -195,6 +206,11 @@ if __name__ == "__main__":
     reset_button.setStyleSheet("background-color: #8b0000; color: #ffffff; padding: 8px;")
     reset_button.clicked.connect(reset_controls)
 
+    exposure_slider = QSlider(Qt.Orientation.Horizontal)
+    exposure_slider.setRange(-100, 100)
+    exposure_slider.setValue(0)
+    exposure_slider.valueChanged.connect(apply_adjustments)
+
     brightness_slider = QSlider(Qt.Orientation.Horizontal)
     brightness_slider.setRange(-100, 100)
     brightness_slider.setValue(0)
@@ -251,6 +267,8 @@ if __name__ == "__main__":
     controls_layout1.addWidget(save_button)
     controls_layout1.addWidget(rotate_button)
     controls_layout1.addWidget(reset_button)
+    controls_layout1.addWidget(QLabel("Exposure:"))
+    controls_layout1.addWidget(exposure_slider)
     controls_layout1.addWidget(QLabel("Brightness:"))
     controls_layout1.addWidget(brightness_slider)
     controls_layout1.addWidget(QLabel("Contrast:"))

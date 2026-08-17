@@ -101,6 +101,16 @@ def rotate_image():
     apply_adjustments()
 
 
+def start_compare():
+    if current_image is not None:
+        update_display(current_image)
+
+
+def stop_compare():
+    if processed_image is not None:
+        update_display(processed_image)
+
+
 def apply_adjustments():
     global current_image, processed_image, rotation_angle
     if current_image is None:
@@ -173,6 +183,13 @@ rotate_button.setStyleSheet(
 )
 rotate_button.clicked.connect(rotate_image)
 
+compare_button = QPushButton("Compare (Hold)")
+compare_button.setStyleSheet(
+    "background-color: #444444; color: #ffffff; padding: 8px;"
+)
+compare_button.pressed.connect(start_compare)
+compare_button.released.connect(stop_compare)
+
 reset_button = QPushButton("Reset")
 reset_button.setStyleSheet(
     "background-color: #8b0000; color: #ffffff; padding: 8px;"
@@ -244,6 +261,7 @@ grayscale_checkbox.stateChanged.connect(apply_adjustments)
 controls_layout1.addWidget(open_button)
 controls_layout1.addWidget(save_button)
 controls_layout1.addWidget(rotate_button)
+controls_layout1.addWidget(compare_button)
 controls_layout1.addWidget(reset_button)
 controls_layout1.addWidget(QLabel("Exposure:"))
 controls_layout1.addWidget(exposure_slider)

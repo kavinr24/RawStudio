@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
 )
 
-from processor import process_image
+from processor import process_image, get_histogram_image
 
 current_image = None
 processed_image = None
@@ -24,6 +24,7 @@ rotation_angle = 0
 def update_display(img):
     if img is None:
         return
+
     if len(img.shape) == 2:
         rgb_img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     else:
@@ -38,6 +39,15 @@ def update_display(img):
     label.setPixmap(
         pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
     )
+
+    hist_img = get_histogram_image(img)
+    if hist_img is not None:
+        hist_rgb = cv2.cvtColor(hist_img, cv2.COLOR_BGR2RGB)
+        hh, ww, cc = hist_rgb.shape
+        q_hist = QImage(
+            hist_rgb.data, ww, hh, cc * ww, QImage.Format.Format_RGB888
+        )
+        histogram_label.setPixmap(QPixmap.fromImage(q_hist))
 
 
 def open_file():
@@ -92,7 +102,7 @@ def rotate_image():
 
 
 def apply_adjustments():
-    global processed_image
+    global current_image, processed_image, rotation_angle
     if current_image is None:
         return
 
@@ -121,14 +131,26 @@ app = QApplication(sys.argv)
 
 window = QWidget()
 window.setWindowTitle("RawStudio")
-window.resize(1500, 720)
+window.resize(1500, 750)
 window.setStyleSheet("background-color: #1e1e1e;")
 
 layout = QVBoxLayout()
 
+main_display_layout = QHBoxLayout()
+
 label = QLabel("RawStudio Canvas")
 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 label.setStyleSheet("color: #ffffff; font-size: 16px;")
+
+histogram_label = QLabel()
+histogram_label.setFixedSize(256, 120)
+histogram_label.setStyleSheet(
+    "background-color: #111111; border: 1px solid #333333;"
+)
+histogram_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+main_display_layout.addWidget(label, stretch=1)
+main_display_layout.addWidget(histogram_label, stretch=0)
 
 controls_layout1 = QHBoxLayout()
 controls_layout2 = QHBoxLayout()
@@ -248,7 +270,7 @@ controls_layout2.addWidget(flip_h_checkbox)
 controls_layout2.addWidget(flip_v_checkbox)
 controls_layout2.addWidget(grayscale_checkbox)
 
-layout.addWidget(label)
+layout.addLayout(main_display_layout)
 layout.addLayout(controls_layout1)
 layout.addLayout(controls_layout2)
 

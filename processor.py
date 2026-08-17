@@ -81,3 +81,31 @@ def process_image(
         adjusted = cv2.cvtColor(adjusted, cv2.COLOR_BGR2GRAY)
 
     return adjusted
+
+
+def get_histogram_image(img, width=256, height=120):
+    if img is None:
+        return None
+
+    hist_canvas = np.zeros((height, width, 3), dtype=np.uint8)
+
+    if len(img.shape) == 2:
+        hist = cv2.calcHist([img], [0], None, [256], [0, 256])
+        cv2.normalize(hist, hist, 0, height, cv2.NORM_MINMAX)
+        pts = np.int32(np.column_stack((np.arange(256), height - hist.ravel())))
+        cv2.polylines(
+            hist_canvas, [pts], isClosed=False, color=(200, 200, 200), thickness=1
+        )
+    else:
+        colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+        for i, color in enumerate(colors):
+            hist = cv2.calcHist([img], [i], None, [256], [0, 256])
+            cv2.normalize(hist, hist, 0, height, cv2.NORM_MINMAX)
+            pts = np.int32(
+                np.column_stack((np.arange(256), height - hist.ravel()))
+            )
+            cv2.polylines(
+                hist_canvas, [pts], isClosed=False, color=color, thickness=1
+            )
+
+    return hist_canvas

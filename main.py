@@ -17,8 +17,21 @@ from PyQt6.QtWidgets import (
 from processor import process_image, get_histogram_image
 
 current_image = None
-processed_image = None
+preview_image = None
+processed_preview = None
 rotation_angle = 0
+
+
+def create_preview(img, max_dim=1280):
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        new_w = int(w * scale)
+        new_h = int(h * scale)
+        return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return img.copy()
 
 
 def update_display(img):
@@ -51,7 +64,7 @@ def update_display(img):
 
 
 def open_file():
-    global current_image
+    global current_image, preview_image
     file_path, _ = QFileDialog.getOpenFileName(
         None, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
     )
@@ -59,12 +72,12 @@ def open_file():
         img = cv2.imread(file_path)
         if img is not None:
             current_image = img
+            preview_image = create_preview(current_image)
             reset_controls()
 
 
 def save_file():
-    global processed_image
-    if processed_image is None:
+    if current_image is None:
         return
     file_path, _ = QFileDialog.getSaveFileName(
         None,
@@ -73,7 +86,24 @@ def save_file():
         "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;Bitmap (*.bmp)",
     )
     if file_path:
-        cv2.imwrite(file_path, processed_image)
+        full_res_output = process_image(
+            img=current_image,
+            rotation_angle=rotation_angle,
+            flip_h=flip_h_checkbox.isChecked(),
+            flip_v=flip_v_checkbox.isChecked(),
+            exposure=exposure_slider.value(),
+            brightness=brightness_slider.value(),
+            contrast=contrast_slider.value() / 100.0,
+            temperature=temperature_slider.value(),
+            saturation=saturation_slider.value() / 100.0,
+            r_scale=red_slider.value() / 100.0,
+            g_scale=green_slider.value() / 100.0,
+            b_scale=blue_slider.value() / 100.0,
+            blur=blur_slider.value(),
+            sharpen=sharpen_slider.value(),
+            grayscale=grayscale_checkbox.isChecked(),
+        )
+        cv2.imwrite(file_path, full_res_output)
 
 
 def reset_controls():
@@ -102,22 +132,22 @@ def rotate_image():
 
 
 def start_compare():
-    if current_image is not None:
-        update_display(current_image)
+    if preview_image is not None:
+        update_display(preview_image)
 
 
 def stop_compare():
-    if processed_image is not None:
-        update_display(processed_image)
+    if processed_preview is not None:
+        update_display(processed_preview)
 
 
 def apply_adjustments():
-    global current_image, processed_image, rotation_angle
-    if current_image is None:
+    global processed_preview
+    if preview_image is None:
         return
 
-    processed_image = process_image(
-        img=current_image,
+    processed_preview = process_image(
+        img=preview_image,
         rotation_angle=rotation_angle,
         flip_h=flip_h_checkbox.isChecked(),
         flip_v=flip_v_checkbox.isChecked(),
@@ -134,7 +164,7 @@ def apply_adjustments():
         grayscale=grayscale_checkbox.isChecked(),
     )
 
-    update_display(processed_image)
+    update_display(processed_preview)
 
 
 app = QApplication(sys.argv)

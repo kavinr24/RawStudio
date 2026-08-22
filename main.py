@@ -1,4 +1,5 @@
 import sys
+
 import cv2
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPixmap
@@ -6,15 +7,12 @@ from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
     QLabel,
-    QPushButton,
-    QSlider,
-    QCheckBox,
-    QVBoxLayout,
     QHBoxLayout,
     QFileDialog,
 )
 
 from processor import process_image, get_histogram_image
+from ui import create_sidebar_ui
 
 current_image = None
 preview_image = None
@@ -46,7 +44,11 @@ def update_display(img):
     h, w, ch = rgb_img.shape
     bytes_per_line = ch * w
     q_img = QImage(
-        rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888
+        rgb_img.data,
+        w,
+        h,
+        bytes_per_line,
+        QImage.Format.Format_RGB888,
     )
     pixmap = QPixmap.fromImage(q_img)
     label.setPixmap(
@@ -56,11 +58,14 @@ def update_display(img):
     hist_img = get_histogram_image(img)
     if hist_img is not None:
         hist_rgb = cv2.cvtColor(hist_img, cv2.COLOR_BGR2RGB)
-        hh, ww, cc = hist_rgb.shape
         q_hist = QImage(
-            hist_rgb.data, ww, hh, cc * ww, QImage.Format.Format_RGB888
+            hist_rgb.data,
+            hist_rgb.shape[1],
+            hist_rgb.shape[0],
+            hist_rgb.shape[1] * 3,
+            QImage.Format.Format_RGB888,
         )
-        histogram_label.setPixmap(QPixmap.fromImage(q_hist))
+        controls["histogram_label"].setPixmap(QPixmap.fromImage(q_hist))
 
 
 def open_file():
@@ -77,6 +82,7 @@ def open_file():
 
 
 def save_file():
+    global current_image, rotation_angle
     if current_image is None:
         return
     file_path, _ = QFileDialog.getSaveFileName(
@@ -89,19 +95,19 @@ def save_file():
         full_res_output = process_image(
             img=current_image,
             rotation_angle=rotation_angle,
-            flip_h=flip_h_checkbox.isChecked(),
-            flip_v=flip_v_checkbox.isChecked(),
-            exposure=exposure_slider.value(),
-            brightness=brightness_slider.value(),
-            contrast=contrast_slider.value() / 100.0,
-            temperature=temperature_slider.value(),
-            saturation=saturation_slider.value() / 100.0,
-            r_scale=red_slider.value() / 100.0,
-            g_scale=green_slider.value() / 100.0,
-            b_scale=blue_slider.value() / 100.0,
-            blur=blur_slider.value(),
-            sharpen=sharpen_slider.value(),
-            grayscale=grayscale_checkbox.isChecked(),
+            flip_h=controls["flip_h"].isChecked(),
+            flip_v=controls["flip_v"].isChecked(),
+            exposure=controls["exposure"].value(),
+            brightness=controls["brightness"].value(),
+            contrast=controls["contrast"].value() / 100.0,
+            temperature=controls["temperature"].value(),
+            saturation=controls["saturation"].value() / 100.0,
+            r_scale=controls["red"].value() / 100.0,
+            g_scale=controls["green"].value() / 100.0,
+            b_scale=controls["blue"].value() / 100.0,
+            blur=controls["blur"].value(),
+            sharpen=controls["sharpen"].value(),
+            grayscale=controls["grayscale"].isChecked(),
         )
         cv2.imwrite(file_path, full_res_output)
 
@@ -109,19 +115,19 @@ def save_file():
 def reset_controls():
     global rotation_angle
     rotation_angle = 0
-    exposure_slider.setValue(0)
-    brightness_slider.setValue(0)
-    contrast_slider.setValue(100)
-    temperature_slider.setValue(0)
-    saturation_slider.setValue(100)
-    red_slider.setValue(100)
-    green_slider.setValue(100)
-    blue_slider.setValue(100)
-    blur_slider.setValue(0)
-    sharpen_slider.setValue(0)
-    flip_h_checkbox.setChecked(False)
-    flip_v_checkbox.setChecked(False)
-    grayscale_checkbox.setChecked(False)
+    controls["exposure"].setValue(0)
+    controls["brightness"].setValue(0)
+    controls["contrast"].setValue(100)
+    controls["temperature"].setValue(0)
+    controls["saturation"].setValue(100)
+    controls["red"].setValue(100)
+    controls["green"].setValue(100)
+    controls["blue"].setValue(100)
+    controls["blur"].setValue(0)
+    controls["sharpen"].setValue(0)
+    controls["flip_h"].setChecked(False)
+    controls["flip_v"].setChecked(False)
+    controls["grayscale"].setChecked(False)
     apply_adjustments()
 
 
@@ -142,28 +148,27 @@ def stop_compare():
 
 
 def apply_adjustments():
-    global processed_preview
+    global preview_image, processed_preview, rotation_angle
     if preview_image is None:
         return
 
     processed_preview = process_image(
         img=preview_image,
         rotation_angle=rotation_angle,
-        flip_h=flip_h_checkbox.isChecked(),
-        flip_v=flip_v_checkbox.isChecked(),
-        exposure=exposure_slider.value(),
-        brightness=brightness_slider.value(),
-        contrast=contrast_slider.value() / 100.0,
-        temperature=temperature_slider.value(),
-        saturation=saturation_slider.value() / 100.0,
-        r_scale=red_slider.value() / 100.0,
-        g_scale=green_slider.value() / 100.0,
-        b_scale=blue_slider.value() / 100.0,
-        blur=blur_slider.value(),
-        sharpen=sharpen_slider.value(),
-        grayscale=grayscale_checkbox.isChecked(),
+        flip_h=controls["flip_h"].isChecked(),
+        flip_v=controls["flip_v"].isChecked(),
+        exposure=controls["exposure"].value(),
+        brightness=controls["brightness"].value(),
+        contrast=controls["contrast"].value() / 100.0,
+        temperature=controls["temperature"].value(),
+        saturation=controls["saturation"].value() / 100.0,
+        r_scale=controls["red"].value() / 100.0,
+        g_scale=controls["green"].value() / 100.0,
+        b_scale=controls["blue"].value() / 100.0,
+        blur=controls["blur"].value(),
+        sharpen=controls["sharpen"].value(),
+        grayscale=controls["grayscale"].isChecked(),
     )
-
     update_display(processed_preview)
 
 
@@ -171,158 +176,42 @@ app = QApplication(sys.argv)
 
 window = QWidget()
 window.setWindowTitle("RawStudio")
-window.resize(1500, 750)
+window.resize(1200, 750)
 window.setStyleSheet("background-color: #1e1e1e;")
 
-layout = QVBoxLayout()
-
-main_display_layout = QHBoxLayout()
+main_layout = QHBoxLayout()
 
 label = QLabel("RawStudio Canvas")
 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 label.setStyleSheet("color: #ffffff; font-size: 16px;")
 
-histogram_label = QLabel()
-histogram_label.setFixedSize(256, 120)
-histogram_label.setStyleSheet(
-    "background-color: #111111; border: 1px solid #333333;"
-)
-histogram_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+controls = create_sidebar_ui()
 
-main_display_layout.addWidget(label, stretch=1)
-main_display_layout.addWidget(histogram_label, stretch=0)
+controls["exposure"].valueChanged.connect(apply_adjustments)
+controls["brightness"].valueChanged.connect(apply_adjustments)
+controls["contrast"].valueChanged.connect(apply_adjustments)
+controls["saturation"].valueChanged.connect(apply_adjustments)
+controls["temperature"].valueChanged.connect(apply_adjustments)
+controls["red"].valueChanged.connect(apply_adjustments)
+controls["green"].valueChanged.connect(apply_adjustments)
+controls["blue"].valueChanged.connect(apply_adjustments)
+controls["blur"].valueChanged.connect(apply_adjustments)
+controls["sharpen"].valueChanged.connect(apply_adjustments)
+controls["flip_h"].stateChanged.connect(apply_adjustments)
+controls["flip_v"].stateChanged.connect(apply_adjustments)
+controls["grayscale"].stateChanged.connect(apply_adjustments)
 
-controls_layout1 = QHBoxLayout()
-controls_layout2 = QHBoxLayout()
+controls["open_btn"].clicked.connect(open_file)
+controls["save_btn"].clicked.connect(save_file)
+controls["rotate_btn"].clicked.connect(rotate_image)
+controls["compare_btn"].pressed.connect(start_compare)
+controls["compare_btn"].released.connect(stop_compare)
+controls["reset_btn"].clicked.connect(reset_controls)
 
-open_button = QPushButton("Open Image")
-open_button.setStyleSheet(
-    "background-color: #333333; color: #ffffff; padding: 8px;"
-)
-open_button.clicked.connect(open_file)
+main_layout.addWidget(label, stretch=1)
+main_layout.addWidget(controls["sidebar"])
 
-save_button = QPushButton("Save Image")
-save_button.setStyleSheet(
-    "background-color: #0e639c; color: #ffffff; padding: 8px;"
-)
-save_button.clicked.connect(save_file)
-
-rotate_button = QPushButton("Rotate 90°")
-rotate_button.setStyleSheet(
-    "background-color: #333333; color: #ffffff; padding: 8px;"
-)
-rotate_button.clicked.connect(rotate_image)
-
-compare_button = QPushButton("Compare (Hold)")
-compare_button.setStyleSheet(
-    "background-color: #444444; color: #ffffff; padding: 8px;"
-)
-compare_button.pressed.connect(start_compare)
-compare_button.released.connect(stop_compare)
-
-reset_button = QPushButton("Reset")
-reset_button.setStyleSheet(
-    "background-color: #8b0000; color: #ffffff; padding: 8px;"
-)
-reset_button.clicked.connect(reset_controls)
-
-exposure_slider = QSlider(Qt.Orientation.Horizontal)
-exposure_slider.setRange(-100, 100)
-exposure_slider.setValue(0)
-exposure_slider.valueChanged.connect(apply_adjustments)
-
-brightness_slider = QSlider(Qt.Orientation.Horizontal)
-brightness_slider.setRange(-100, 100)
-brightness_slider.setValue(0)
-brightness_slider.valueChanged.connect(apply_adjustments)
-
-contrast_slider = QSlider(Qt.Orientation.Horizontal)
-contrast_slider.setRange(10, 300)
-contrast_slider.setValue(100)
-contrast_slider.valueChanged.connect(apply_adjustments)
-
-temperature_slider = QSlider(Qt.Orientation.Horizontal)
-temperature_slider.setRange(-100, 100)
-temperature_slider.setValue(0)
-temperature_slider.valueChanged.connect(apply_adjustments)
-
-saturation_slider = QSlider(Qt.Orientation.Horizontal)
-saturation_slider.setRange(0, 200)
-saturation_slider.setValue(100)
-saturation_slider.valueChanged.connect(apply_adjustments)
-
-red_slider = QSlider(Qt.Orientation.Horizontal)
-red_slider.setRange(0, 200)
-red_slider.setValue(100)
-red_slider.valueChanged.connect(apply_adjustments)
-
-green_slider = QSlider(Qt.Orientation.Horizontal)
-green_slider.setRange(0, 200)
-green_slider.setValue(100)
-green_slider.valueChanged.connect(apply_adjustments)
-
-blue_slider = QSlider(Qt.Orientation.Horizontal)
-blue_slider.setRange(0, 200)
-blue_slider.setValue(100)
-blue_slider.valueChanged.connect(apply_adjustments)
-
-blur_slider = QSlider(Qt.Orientation.Horizontal)
-blur_slider.setRange(0, 20)
-blur_slider.setValue(0)
-blur_slider.valueChanged.connect(apply_adjustments)
-
-sharpen_slider = QSlider(Qt.Orientation.Horizontal)
-sharpen_slider.setRange(0, 10)
-sharpen_slider.setValue(0)
-sharpen_slider.valueChanged.connect(apply_adjustments)
-
-flip_h_checkbox = QCheckBox("Flip H")
-flip_h_checkbox.setStyleSheet("color: #ffffff;")
-flip_h_checkbox.stateChanged.connect(apply_adjustments)
-
-flip_v_checkbox = QCheckBox("Flip V")
-flip_v_checkbox.setStyleSheet("color: #ffffff;")
-flip_v_checkbox.stateChanged.connect(apply_adjustments)
-
-grayscale_checkbox = QCheckBox("Grayscale")
-grayscale_checkbox.setStyleSheet("color: #ffffff;")
-grayscale_checkbox.stateChanged.connect(apply_adjustments)
-
-controls_layout1.addWidget(open_button)
-controls_layout1.addWidget(save_button)
-controls_layout1.addWidget(rotate_button)
-controls_layout1.addWidget(compare_button)
-controls_layout1.addWidget(reset_button)
-controls_layout1.addWidget(QLabel("Exposure:"))
-controls_layout1.addWidget(exposure_slider)
-controls_layout1.addWidget(QLabel("Brightness:"))
-controls_layout1.addWidget(brightness_slider)
-controls_layout1.addWidget(QLabel("Contrast:"))
-controls_layout1.addWidget(contrast_slider)
-controls_layout1.addWidget(QLabel("Temp:"))
-controls_layout1.addWidget(temperature_slider)
-controls_layout1.addWidget(QLabel("Saturation:"))
-controls_layout1.addWidget(saturation_slider)
-
-controls_layout2.addWidget(QLabel("Red:"))
-controls_layout2.addWidget(red_slider)
-controls_layout2.addWidget(QLabel("Green:"))
-controls_layout2.addWidget(green_slider)
-controls_layout2.addWidget(QLabel("Blue:"))
-controls_layout2.addWidget(blue_slider)
-controls_layout2.addWidget(QLabel("Blur:"))
-controls_layout2.addWidget(blur_slider)
-controls_layout2.addWidget(QLabel("Sharpen:"))
-controls_layout2.addWidget(sharpen_slider)
-controls_layout2.addWidget(flip_h_checkbox)
-controls_layout2.addWidget(flip_v_checkbox)
-controls_layout2.addWidget(grayscale_checkbox)
-
-layout.addLayout(main_display_layout)
-layout.addLayout(controls_layout1)
-layout.addLayout(controls_layout2)
-
-window.setLayout(layout)
+window.setLayout(main_layout)
 window.show()
 
 sys.exit(app.exec())

@@ -44,11 +44,7 @@ def update_display(img):
     h, w, ch = rgb_img.shape
     bytes_per_line = ch * w
     q_img = QImage(
-        rgb_img.data,
-        w,
-        h,
-        bytes_per_line,
-        QImage.Format.Format_RGB888,
+        rgb_img.data, w, h, bytes_per_line, QImage.Format.Format_RGB888
     )
     pixmap = QPixmap.fromImage(q_img)
     label.setPixmap(
@@ -58,12 +54,9 @@ def update_display(img):
     hist_img = get_histogram_image(img)
     if hist_img is not None:
         hist_rgb = cv2.cvtColor(hist_img, cv2.COLOR_BGR2RGB)
+        hh, hw, hch = hist_rgb.shape
         q_hist = QImage(
-            hist_rgb.data,
-            hist_rgb.shape[1],
-            hist_rgb.shape[0],
-            hist_rgb.shape[1] * 3,
-            QImage.Format.Format_RGB888,
+            hist_rgb.data, hw, hh, hch * hw, QImage.Format.Format_RGB888
         )
         controls["histogram_label"].setPixmap(QPixmap.fromImage(q_hist))
 
@@ -105,11 +98,14 @@ def save_file():
             r_scale=controls["red"].value() / 100.0,
             g_scale=controls["green"].value() / 100.0,
             b_scale=controls["blue"].value() / 100.0,
+            aspect_ratio=controls["aspect_combo"].currentText(),
+            vignette=controls["vignette"].value(),
             blur=controls["blur"].value(),
             sharpen=controls["sharpen"].value(),
             grayscale=controls["grayscale"].isChecked(),
         )
-        cv2.imwrite(file_path, full_res_output)
+        if full_res_output is not None:
+            cv2.imwrite(file_path, full_res_output)
 
 
 def reset_controls():
@@ -123,6 +119,8 @@ def reset_controls():
     controls["red"].setValue(100)
     controls["green"].setValue(100)
     controls["blue"].setValue(100)
+    controls["aspect_combo"].setCurrentIndex(0)
+    controls["vignette"].setValue(0)
     controls["blur"].setValue(0)
     controls["sharpen"].setValue(0)
     controls["flip_h"].setChecked(False)
@@ -165,10 +163,13 @@ def apply_adjustments():
         r_scale=controls["red"].value() / 100.0,
         g_scale=controls["green"].value() / 100.0,
         b_scale=controls["blue"].value() / 100.0,
+        aspect_ratio=controls["aspect_combo"].currentText(),
+        vignette=controls["vignette"].value(),
         blur=controls["blur"].value(),
         sharpen=controls["sharpen"].value(),
         grayscale=controls["grayscale"].isChecked(),
     )
+
     update_display(processed_preview)
 
 
@@ -191,10 +192,12 @@ controls["exposure"].valueChanged.connect(apply_adjustments)
 controls["brightness"].valueChanged.connect(apply_adjustments)
 controls["contrast"].valueChanged.connect(apply_adjustments)
 controls["saturation"].valueChanged.connect(apply_adjustments)
+controls["aspect_combo"].currentIndexChanged.connect(apply_adjustments)
 controls["temperature"].valueChanged.connect(apply_adjustments)
 controls["red"].valueChanged.connect(apply_adjustments)
 controls["green"].valueChanged.connect(apply_adjustments)
 controls["blue"].valueChanged.connect(apply_adjustments)
+controls["vignette"].valueChanged.connect(apply_adjustments)
 controls["blur"].valueChanged.connect(apply_adjustments)
 controls["sharpen"].valueChanged.connect(apply_adjustments)
 controls["flip_h"].stateChanged.connect(apply_adjustments)

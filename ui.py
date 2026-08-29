@@ -129,6 +129,73 @@ def create_sidebar_ui():
     tabs.addTab(color_tab, "Color")
     tabs.addTab(effects_tab, "Effects")
 
+    shadows_group_widget = QWidget()
+    shadows_container_layout = QVBoxLayout()
+    shadows_container_layout.setContentsMargins(0, 5, 0, 5)
+    shadows_container_layout.setSpacing(4)
+
+    shadows_header_layout = QHBoxLayout()
+    shadows_label = QLabel("Shadow Recovery")
+    shadows_label.setStyleSheet(
+        "color: #cccccc; font-weight: bold; font-size: 11px;"
+    )
+    shadows_value_display = QLabel("0")
+    shadows_value_display.setFixedWidth(35)
+    shadows_value_display.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    )
+    shadows_value_display.setStyleSheet(
+        "color: #007acc; font-weight: bold; font-size: 11px;"
+    )
+    shadows_header_layout.addWidget(shadows_label)
+    shadows_header_layout.addStretch()
+    shadows_header_layout.addWidget(shadows_value_display)
+
+    shadows_slider = QSlider(Qt.Orientation.Horizontal)
+    shadows_slider.setRange(-100, 100)
+    shadows_slider.setValue(0)
+    shadows_slider.setSingleStep(1)
+    shadows_slider.setPageStep(10)
+    shadows_slider.setTickInterval(25)
+    shadows_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+    shadows_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+    shadows_slider.setStyleSheet(
+        "QSlider::groove:horizontal { "
+        "border: 1px solid #333333; height: 4px; background: #1e1e1e; "
+        "border-radius: 2px; } "
+        "QSlider::sub-page:horizontal { background: #007acc; "
+        "border-radius: 2px; } "
+        "QSlider::handle:horizontal { background: #cccccc; "
+        "border: 1px solid #555555; width: 12px; margin-top: -4px; "
+        "margin-bottom: -4px; border-radius: 6px; } "
+        "QSlider::handle:horizontal:hover { background: #ffffff; "
+        "border: 1px solid #007acc; }"
+    )
+
+    shadows_reset_btn = QPushButton("R")
+    shadows_reset_btn.setFixedSize(16, 16)
+    shadows_reset_btn.setToolTip("Reset Shadow Adjustment")
+    shadows_reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    shadows_reset_btn.setStyleSheet(
+        "QPushButton { background-color: #2d2d2d; color: #888888; "
+        "border: 1px solid #3c3c3c; border-radius: 8px; font-weight: bold; } "
+        "QPushButton:hover { background-color: #3c3c3c; color: #ffffff; }"
+    )
+
+    shadows_control_row = QHBoxLayout()
+    shadows_control_row.addWidget(shadows_slider, stretch=1)
+    shadows_control_row.addWidget(shadows_reset_btn)
+
+    def update_shadows_label_text(val):
+        shadows_value_display.setText(str(val))
+
+    shadows_slider.valueChanged.connect(update_shadows_label_text)
+    shadows_reset_btn.clicked.connect(lambda: shadows_slider.setValue(0))
+
+    shadows_container_layout.addLayout(shadows_header_layout)
+    shadows_container_layout.addLayout(shadows_control_row)
+    shadows_group_widget.setLayout(shadows_container_layout)
+
     open_button = QPushButton("Open Image")
     open_button.setStyleSheet(
         "background-color: #333333; color: #ffffff; padding: 8px;"
@@ -160,6 +227,7 @@ def create_sidebar_ui():
     sidebar_layout = QVBoxLayout()
     sidebar_layout.addWidget(histogram_label, alignment=Qt.AlignmentFlag.AlignCenter)
     sidebar_layout.addWidget(tabs)
+    sidebar_layout.addWidget(shadows_group_widget)
     sidebar_layout.addLayout(action_layout)
     sidebar_layout.addLayout(action_layout2)
 
@@ -186,6 +254,9 @@ def create_sidebar_ui():
         "flip_v": flip_v_checkbox,
         "grayscale": grayscale_checkbox,
         "rotate_btn": rotate_button,
+        "shadows": shadows_slider,
+        "shadows_reset_btn": shadows_reset_btn,
+        "shadows_value_display": shadows_value_display,
         "open_btn": open_button,
         "save_btn": save_button,
         "compare_btn": compare_button,

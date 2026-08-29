@@ -11,6 +11,7 @@ def process_image(
     brightness=0,
     contrast=1.0,
     temperature=0,
+    shadows=0,
     saturation=1.0,
     r_scale=1.0,
     g_scale=1.0,
@@ -80,6 +81,132 @@ def process_image(
         r = np.clip(r + temperature, 0, 255)
         b = np.clip(b - temperature, 0, 255)
         adjusted = cv2.merge([b, g, r]).astype(np.uint8)
+
+    if shadows != 0:
+        b_chan, g_chan, r_chan = cv2.split(
+            adjusted.astype(np.float32) / 255.0
+        )
+
+        def gamma_to_linear(channel):
+            mask = channel <= 0.04045
+            channel_linear = np.zeros_like(channel)
+            channel_linear[mask] = channel[mask] / 12.92
+            channel_linear[~mask] = (
+                (channel[~mask] + 0.055) / 1.055
+            ) ** 2.4
+            return channel_linear
+
+        r_linear = gamma_to_linear(r_chan)
+        g_linear = gamma_to_linear(g_chan)
+        b_linear = gamma_to_linear(b_chan)
+
+        x_matrix = (
+            r_linear * 0.4124564
+            + g_linear * 0.3575761
+            + b_linear * 0.1804375
+        )
+        y_matrix = (
+            r_linear * 0.2126729
+            + g_linear * 0.7151522
+            + b_linear * 0.0721750
+        )
+        z_matrix = (
+            r_linear * 0.0193339
+            + g_linear * 0.1191920
+            + b_linear * 0.9503041
+        )
+
+        y_normalized = y_matrix / 1.00000
+
+        delta_epsilon = 6.0 / 29.0
+        epsilon_cubed = delta_epsilon**3
+
+        l_mask = y_normalized > epsilon_cubed
+        f_y = np.zeros_like(y_normalized)
+        f_y[l_mask] = y_normalized[l_mask] ** (1.0 / 3.0)
+        f_y[~l_mask] = (
+            y_normalized[~l_mask] / (3.0 * (delta_epsilon**2))
+        ) + (4.0 / 29.0)
+
+        luminance_l = (116.0 * f_y) - 16.0
+        luminance_norm = np.clip(luminance_l / 100.0, 0.0, 1.0)
+
+        shadow_cutoff_low = 0.0
+        shadow_cutoff_high = 0.45
+        pivot_point = 0.225
+
+        raw_shadow_mask = np.zeros_like(luminance_norm)
+        in_range = (luminance_norm >= shadow_cutoff_low) & (
+            luminance_norm <= shadow_cutoff_high
+        )
+        raw_shadow_mask[in_range] = (
+            shadow_cutoff_high - luminance_norm[in_range]
+        ) / (shadow_cutoff_high - shadow_cutoff_low)
+
+        smooth_shadow_mask = 0.5 * (
+            1.0 + np.cos(np.pi * (1.0 - raw_shadow_mask))
+        )
+
+        blurred_luminance = cv2.GaussianBlur(
+            luminance_norm.astype(np.float32), (15, 15), 0
+        )
+        high_freq_detail = luminance_norm - blurred_luminance
+
+        shadow_intensity = shadows / 100.0
+
+        if shadow_intensity > 0:
+            expansion_factor = 1.0 + (shadow_intensity * 1.5)
+            lifted_luminance = np.power(
+                luminance_norm, 1.0 / expansion_factor
+            )
+            processed_luminance = (
+                lifted_luminance * smooth_shadow_mask
+            ) + (luminance_norm * (1.0 - smooth_shadow_mask))
+        else:
+            compression_factor = 1.0 + (abs(shadow_intensity) * 1.2)
+            crushed_luminance = np.power(
+                luminance_norm, compression_factor
+            )
+            processed_luminance = (
+                crushed_luminance * smooth_shadow_mask
+            ) + (luminance_norm * (1.0 - smooth_shadow_mask))
+
+        processed_luminance = processed_luminance + (
+            high_freq_detail * smooth_shadow_mask * 0.5
+        )
+        processed_luminance = np.clip(processed_luminance, 0.0, 1.0)
+
+        safe_luminance_orig = np.maximum(luminance_norm, 1e-6)
+        luminance_ratio = processed_luminance / safe_luminance_orig
+
+        r_adjusted = np.clip(r_chan * luminance_ratio, 0.0, 1.0)
+        g_adjusted = np.clip(g_chan * luminance_ratio, 0.0, 1.0)
+        b_adjusted = np.clip(b_chan * luminance_ratio, 0.0, 1.0)
+
+        chroma_suppression = 1.0 - (
+            smooth_shadow_mask * max(0.0, shadow_intensity) * 0.35
+        )
+        gray_point = (
+            (r_adjusted * 0.299)
+            + (g_adjusted * 0.587)
+            + (b_adjusted * 0.114)
+        )
+
+        r_final = (r_adjusted * chroma_suppression) + (
+            gray_point * (1.0 - chroma_suppression)
+        )
+        g_final = (g_adjusted * chroma_suppression) + (
+            gray_point * (1.0 - chroma_suppression)
+        )
+        b_final = (b_adjusted * chroma_suppression) + (
+            gray_point * (1.0 - chroma_suppression)
+        )
+
+        b_out = (np.clip(b_final, 0.0, 1.0) * 255.0).astype(np.uint8)
+        g_out = (np.clip(g_final, 0.0, 1.0) * 255.0).astype(np.uint8)
+        r_out = (np.clip(r_final, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+        adjusted = cv2.merge([b_out, g_out, r_out])
 
     if saturation != 1.0:
         hsv = cv2.cvtColor(adjusted, cv2.COLOR_BGR2HSV).astype(np.float32)

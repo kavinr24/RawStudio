@@ -1,2 +1,2 @@
 # RawStudio
-A simple desktop photo editor.
+A simple desktop photo editor. 

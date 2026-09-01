@@ -2,4 +2,3 @@ __pycache__
 cv2_testing.py
 segmentation.py
 processor_revamp.py
-flet_gui.py

@@ -1,7 +1,7 @@
 import sys
 
 import cv2
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -94,6 +94,7 @@ def save_file():
             brightness=controls["brightness"].value(),
             contrast=controls["contrast"].value() / 100.0,
             temperature=controls["temperature"].value(),
+            shadows=controls["shadows"].value(),
             saturation=controls["saturation"].value() / 100.0,
             r_scale=controls["red"].value() / 100.0,
             g_scale=controls["green"].value() / 100.0,
@@ -115,6 +116,7 @@ def reset_controls():
     controls["brightness"].setValue(0)
     controls["contrast"].setValue(100)
     controls["temperature"].setValue(0)
+    controls["shadows"].setValue(0)
     controls["saturation"].setValue(100)
     controls["red"].setValue(100)
     controls["green"].setValue(100)
@@ -145,6 +147,46 @@ def stop_compare():
         update_display(processed_preview)
 
 
+def handle_shadows_key_navigation(event):
+    if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+        step = 10
+    else:
+        step = 1
+    current_val = controls["shadows"].value()
+    if event.key() == Qt.Key.Key_Up or event.key() == Qt.Key.Key_Right:
+        controls["shadows"].setValue(min(100, current_val + step))
+    elif event.key() == Qt.Key.Key_Down or event.key() == Qt.Key.Key_Left:
+        controls["shadows"].setValue(max(-100, current_val - step))
+
+
+def handle_shadows_wheel_event(event):
+    delta = event.angleDelta().y()
+    current_val = controls["shadows"].value()
+    if delta > 0:
+        controls["shadows"].setValue(min(100, current_val + 2))
+    elif delta < 0:
+        controls["shadows"].setValue(max(-100, current_val - 2))
+    event.accept()
+
+
+class _ShadowsEventFilter(QObject):
+    def eventFilter(self, watched, event):
+        if watched is controls["shadows"]:
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() in (
+                    Qt.Key.Key_Up,
+                    Qt.Key.Key_Down,
+                    Qt.Key.Key_Left,
+                    Qt.Key.Key_Right,
+                ):
+                    handle_shadows_key_navigation(event)
+                    return True
+            elif event.type() == QEvent.Type.Wheel:
+                handle_shadows_wheel_event(event)
+                return True
+        return super().eventFilter(watched, event)
+
+
 def apply_adjustments():
     global preview_image, processed_preview, rotation_angle
     if preview_image is None:
@@ -159,6 +201,7 @@ def apply_adjustments():
         brightness=controls["brightness"].value(),
         contrast=controls["contrast"].value() / 100.0,
         temperature=controls["temperature"].value(),
+        shadows=controls["shadows"].value(),
         saturation=controls["saturation"].value() / 100.0,
         r_scale=controls["red"].value() / 100.0,
         g_scale=controls["green"].value() / 100.0,
@@ -194,6 +237,7 @@ controls["contrast"].valueChanged.connect(apply_adjustments)
 controls["saturation"].valueChanged.connect(apply_adjustments)
 controls["aspect_combo"].currentIndexChanged.connect(apply_adjustments)
 controls["temperature"].valueChanged.connect(apply_adjustments)
+controls["shadows"].valueChanged.connect(apply_adjustments)
 controls["red"].valueChanged.connect(apply_adjustments)
 controls["green"].valueChanged.connect(apply_adjustments)
 controls["blue"].valueChanged.connect(apply_adjustments)
@@ -210,6 +254,9 @@ controls["rotate_btn"].clicked.connect(rotate_image)
 controls["compare_btn"].pressed.connect(start_compare)
 controls["compare_btn"].released.connect(stop_compare)
 controls["reset_btn"].clicked.connect(reset_controls)
+
+shadows_event_filter = _ShadowsEventFilter()
+controls["shadows"].installEventFilter(shadows_event_filter)
 
 main_layout.addWidget(label, stretch=1)
 main_layout.addWidget(controls["sidebar"])

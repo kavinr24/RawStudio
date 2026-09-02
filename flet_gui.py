@@ -1,4 +1,11 @@
+import base64
+import os
+
+import cv2
 import flet as ft
+import numpy as np
+
+from processor import get_histogram_image, process_image
 
 BG_DARK = "#121212"
 BG_PANEL = "#1E1E1E"
@@ -9,8 +16,86 @@ TEXT_MAIN = "#CCCCCC"
 TEXT_MUTED = "#888888"
 BORDER_COLOR = "#333333"
 
+TRANSPARENT_PNG = (
+    "data:image/png;base64,"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
+
+controls = {}
+original = None
+preview = None
+_page = None
+_picker = None
+canvas_image = None
+placeholder = None
+histogram_image = None
+filename_text = None
+
+
+def img_to_data_uri(img, png=False):
+    if img is None:
+        return ""
+    if len(img.shape) == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    else:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    if png:
+        ok, buf = cv2.imencode(".png", img)
+    else:
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return "data:image/" + ("png" if png else "jpeg") + ";base64," + base64.b64encode(buf).decode("ascii")
+
+
+def create_preview(img, max_dim=1280):
+    h, w = img.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / float(max(h, w))
+        return cv2.resize(
+            img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA
+        )
+    return img.copy()
+
+
+def current_params(img):
+    return dict(
+        img=img,
+        exposure=controls["Exposure"].value,
+        contrast=controls["Contrast"].value / 100.0,
+        shadows=controls["Shadows"].value,
+        temperature=controls["Temperature"].value,
+        saturation=controls["Saturation"].value / 100.0,
+    )
+
+
+def apply_adjustments():
+    global canvas_image, placeholder, histogram_image
+    if original is None or canvas_image is None:
+        return
+    processed = process_image(**current_params(preview))
+    canvas_image.src = img_to_data_uri(processed)
+    canvas_image.visible = True
+    placeholder.visible = False
+    histogram_image.src = img_to_data_uri(get_histogram_image(processed), png=True)
+    if _page is not None:
+        _page.update()
+
+
+def _on_slider(e, value_text):
+    value_text.value = f"{e.control.value:.0f}"
+    apply_adjustments()
+
 
 def slider_row(label, value, lo=-100, hi=100):
+    value_text = ft.Text(f"{value:.0f}", color=TEXT_MUTED, size=11)
+    slider = ft.Slider(
+        min=lo,
+        max=hi,
+        value=value,
+        active_color=ACCENT_BLUE,
+        inactive_color=BG_INPUT,
+        on_change=lambda e: _on_slider(e, value_text),
+    )
+    controls[label] = slider
     return ft.Column(
         spacing=2,
         controls=[
@@ -18,16 +103,10 @@ def slider_row(label, value, lo=-100, hi=100):
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
                     ft.Text(label, color=TEXT_MAIN, size=11),
-                    ft.Text(f"{value:.0f}", color=TEXT_MUTED, size=11),
+                    value_text,
                 ],
             ),
-            ft.Slider(
-                min=lo,
-                max=hi,
-                value=value,
-                active_color=ACCENT_BLUE,
-                inactive_color=BG_INPUT,
-            ),
+            slider,
         ],
     )
 
@@ -61,7 +140,41 @@ def thumbnail_item(filename, active=False):
     )
 
 
+async def open_clicked(e):
+    global original, preview
+    files = await _picker.pick_files(
+        dialog_title="Open Image",
+        file_type=ft.FilePickerFileType.IMAGE,
+        with_data=True,
+    )
+    if files and files[0].bytes:
+        arr = np.frombuffer(files[0].bytes, np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            original = img
+            preview = create_preview(original)
+            if filename_text is not None and files[0].name:
+                filename_text.value = files[0].name
+            apply_adjustments()
+
+
+async def save_clicked(e):
+    if original is None:
+        return
+    processed = process_image(**current_params(original))
+    path = await _picker.save_file(
+        dialog_title="Save Image",
+        file_name="output.png",
+        allowed_extensions=["png", "jpg", "jpeg", "bmp"],
+    )
+    if path:
+        cv2.imwrite(path, processed)
+
+
 def main(page: ft.Page):
+    global _page, _picker, canvas_image, placeholder, histogram_image, filename_text
+    _page = page
+
     page.title = "RawStudio"
     page.padding = 0
     page.spacing = 0
@@ -71,6 +184,11 @@ def main(page: ft.Page):
     page.window.min_height = 720
 
     page.bgcolor = BG_DARK
+
+    file_picker = ft.FilePicker()
+    _picker = file_picker
+
+    filename_text = ft.Text("IMG_0042.CR2", color=TEXT_MUTED, size=12)
 
     header_bar = ft.Container(
         height=40,
@@ -94,7 +212,7 @@ def main(page: ft.Page):
                             color="#FFFFFF",
                             size=14,
                         ),
-                        ft.Text("IMG_0042.CR2", color=TEXT_MUTED, size=12),
+                        filename_text,
                     ],
                 ),
                 ft.Row(
@@ -104,6 +222,7 @@ def main(page: ft.Page):
                             "Open",
                             icon=ft.Icons.FOLDER_OPEN,
                             style=ft.ButtonStyle(color=TEXT_MAIN),
+                            on_click=open_clicked,
                         ),
                         ft.Button(
                             "Save",
@@ -113,6 +232,7 @@ def main(page: ft.Page):
                                 bgcolor=ACCENT_BLUE,
                                 shape=ft.RoundedRectangleBorder(radius=4),
                             ),
+                            on_click=save_clicked,
                         ),
                     ],
                 ),
@@ -156,26 +276,34 @@ def main(page: ft.Page):
         ),
     )
 
+    placeholder = ft.Container(
+        alignment=ft.Alignment.CENTER,
+        content=ft.Column(
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=10,
+            controls=[
+                ft.Icon(ft.Icons.IMAGE, size=120, color="#222222"),
+                ft.Text("No image loaded", color=TEXT_MUTED, size=14),
+            ],
+        ),
+    )
+
+    canvas_image = ft.Image(
+        src=TRANSPARENT_PNG,
+        fit=ft.BoxFit.CONTAIN,
+        expand=True,
+        visible=False,
+    )
+
     canvas_container = ft.Container(
         expand=True,
         bgcolor=BG_DARK,
         alignment=ft.Alignment.CENTER,
         content=ft.Stack(
             controls=[
-                ft.Container(
-                    alignment=ft.Alignment.CENTER,
-                    content=ft.Column(
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=10,
-                        controls=[
-                            ft.Icon(ft.Icons.IMAGE, size=120, color="#222222"),
-                            ft.Text(
-                                "No image loaded", color=TEXT_MUTED, size=14
-                            ),
-                        ],
-                    ),
-                ),
+                placeholder,
+                canvas_image,
                 ft.Container(
                     alignment=ft.Alignment.TOP_LEFT,
                     padding=12,
@@ -194,6 +322,12 @@ def main(page: ft.Page):
         ),
     )
 
+    histogram_image = ft.Image(
+        src=TRANSPARENT_PNG,
+        fit=ft.BoxFit.CONTAIN,
+        expand=True,
+    )
+
     histogram_card = ft.Container(
         height=100,
         bgcolor=BG_INPUT,
@@ -209,55 +343,7 @@ def main(page: ft.Page):
                         ft.Text("RGB", size=9, color=TEXT_MUTED),
                     ],
                 ),
-                ft.Row(
-                    expand=True,
-                    alignment=ft.MainAxisAlignment.SPACE_EVENLY,
-                    vertical_alignment=ft.CrossAxisAlignment.END,
-                    controls=[
-                        ft.Container(
-                            width=10,
-                            height=25,
-                            bgcolor="#44FFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=45,
-                            bgcolor="#66FFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=70,
-                            bgcolor="#88FFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=40,
-                            bgcolor="#AAFFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=55,
-                            bgcolor="#CCFFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=30,
-                            bgcolor="#EEFFFFFF",
-                            border_radius=2,
-                        ),
-                        ft.Container(
-                            width=10,
-                            height=15,
-                            bgcolor="#FFFFFF",
-                            border_radius=2,
-                        ),
-                    ],
-                ),
+                histogram_image,
             ],
         ),
     )
@@ -270,7 +356,7 @@ def main(page: ft.Page):
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
             slider_row("Exposure", 0),
-            slider_row("Contrast", 0),
+            slider_row("Contrast", 100, 0, 200),
             slider_row("Shadows", 0),
         ],
     )
@@ -282,8 +368,8 @@ def main(page: ft.Page):
         expanded=False,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            slider_row("Temperature", 5500, 2000, 10000),
-            slider_row("Saturation", 0),
+            slider_row("Temperature", 0, -100, 100),
+            slider_row("Saturation", 100, 0, 200),
         ],
     )
 
@@ -330,6 +416,7 @@ def main(page: ft.Page):
         content=ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
+                ft.Text("Ready", size=10, color=TEXT_MUTED),
                 ft.Text("6000 x 4000", size=10, color=TEXT_MUTED),
             ],
         ),
@@ -356,4 +443,5 @@ def main(page: ft.Page):
     )
 
 
-ft.run(main)
+if __name__ == "__main__":
+    ft.run(main)

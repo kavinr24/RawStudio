@@ -43,10 +43,11 @@ preview = None
 _page = None
 _picker = None
 canvas_image = None
+canvas_wrap = None
 placeholder = None
 histogram_image = None
-filename_text = None
 rotation_angle = 0
+zoom_level = 1.0
 _render_busy = False
 _render_pending = False
 
@@ -258,33 +259,22 @@ def toggle_row(label):
     )
 
 
-def thumbnail_item(filename, active=False):
-    return ft.Container(
-        width=85,
-        height=55,
-        bgcolor=BG_INPUT,
-        border_radius=4,
-        border=ft.Border.all(2, ACCENT_BLUE if active else BORDER_COLOR),
-        padding=4,
-        content=ft.Column(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[
-                ft.Icon(
-                    ft.Icons.IMAGE_OUTLINED,
-                    color=ACCENT_BLUE if active else TEXT_MUTED,
-                    size=20,
-                ),
-                ft.Text(
-                    filename,
-                    size=9,
-                    color=TEXT_MAIN if active else TEXT_MUTED,
-                    no_wrap=True,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-            ],
-        ),
-    )
+def _apply_zoom():
+    if _page is not None and canvas_wrap is not None:
+        canvas_wrap.scale = zoom_level
+        _page.update()
+
+
+async def zoom_in_clicked(e):
+    global zoom_level
+    zoom_level = min(zoom_level * 1.25, 8.0)
+    _apply_zoom()
+
+
+async def zoom_out_clicked(e):
+    global zoom_level
+    zoom_level = max(zoom_level / 1.25, 0.1)
+    _apply_zoom()
 
 
 async def rotate_clicked(e):
@@ -318,8 +308,6 @@ async def open_clicked(e):
         if img is not None:
             original = img
             preview = create_preview(original)
-            if filename_text is not None and files[0].name:
-                filename_text.value = files[0].name
             await reset_clicked(None)
 
 
@@ -337,7 +325,7 @@ async def save_clicked(e):
 
 
 def main(page: ft.Page):
-    global _page, _picker, canvas_image, placeholder, histogram_image, filename_text
+    global _page, _picker, canvas_image, canvas_wrap, placeholder, histogram_image
     _page = page
 
     page.title = "RawStudio"
@@ -352,8 +340,6 @@ def main(page: ft.Page):
 
     file_picker = ft.FilePicker()
     _picker = file_picker
-
-    filename_text = ft.Text("IMG_0042.CR2", color=TEXT_MUTED, size=12)
 
     header_bar = ft.Container(
         height=40,
@@ -377,7 +363,6 @@ def main(page: ft.Page):
                             color="#FFFFFF",
                             size=14,
                         ),
-                        filename_text,
                     ],
                 ),
                 ft.Row(
@@ -415,27 +400,18 @@ def main(page: ft.Page):
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=8,
             controls=[
-                ft.IconButton(
-                    icon=ft.Icons.CROP,
-                    icon_color=TEXT_MAIN,
-                    tooltip="Crop",
-                    selected_icon_color=ACCENT_BLUE,
-                ),
-                ft.IconButton(
-                    icon=ft.Icons.COLOR_LENS,
-                    icon_color=TEXT_MAIN,
-                    tooltip="Color",
-                ),
                 ft.Divider(color=BORDER_COLOR, height=1),
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_IN,
                     icon_color=TEXT_MAIN,
                     tooltip="Zoom In",
+                    on_click=zoom_in_clicked,
                 ),
                 ft.IconButton(
                     icon=ft.Icons.ZOOM_OUT,
                     icon_color=TEXT_MAIN,
                     tooltip="Zoom Out",
+                    on_click=zoom_out_clicked,
                 ),
             ],
         ),
@@ -461,14 +437,22 @@ def main(page: ft.Page):
         visible=False,
     )
 
+    canvas_wrap = ft.Container(
+        expand=True,
+        alignment=ft.Alignment.CENTER,
+        scale=zoom_level,
+        content=canvas_image,
+    )
+
     canvas_container = ft.Container(
         expand=True,
         bgcolor=BG_DARK,
         alignment=ft.Alignment.CENTER,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
         content=ft.Stack(
             controls=[
                 placeholder,
-                canvas_image,
+                canvas_wrap,
                 ft.Container(
                     alignment=ft.Alignment.TOP_LEFT,
                     padding=12,
@@ -626,25 +610,6 @@ def main(page: ft.Page):
         ),
     )
 
-    bottom_filmstrip = ft.Container(
-        height=75,
-        bgcolor=BG_HEADER,
-        border=ft.Border.only(top=ft.BorderSide(1, BORDER_COLOR)),
-        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-        content=ft.Row(
-            scroll=ft.ScrollMode.AUTO,
-            spacing=8,
-            controls=[
-                thumbnail_item("IMG_001.CR2"),
-                thumbnail_item("IMG_002.CR2", active=True),
-                thumbnail_item("IMG_003.CR2"),
-                thumbnail_item("IMG_004.CR2"),
-                thumbnail_item("IMG_005.CR2"),
-                thumbnail_item("IMG_006.CR2"),
-            ],
-        ),
-    )
-
     status_bar = ft.Container(
         height=20,
         bgcolor=BG_DARK,
@@ -668,7 +633,7 @@ def main(page: ft.Page):
     workspace = ft.Column(
         expand=True,
         spacing=0,
-        controls=[center_area, bottom_filmstrip],
+        controls=[center_area],
     )
 
     page.add(

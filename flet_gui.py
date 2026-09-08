@@ -5,7 +5,12 @@ import cv2
 import flet as ft
 import numpy as np
 
-from processor import get_histogram_image, process_image
+from processor import (
+    extract_edge_mask,
+    get_histogram_image,
+    process_image,
+    run_extra_effects_pipeline,
+)
 
 BG_DARK = "#121212"
 BG_PANEL = "#1E1E1E"
@@ -30,6 +35,29 @@ canvas_image = None
 placeholder = None
 histogram_image = None
 filename_text = None
+rotation_angle = 0
+
+Toggles = ("Flip H", "Flip V", "Grayscale", "Auto Select")
+
+RESET_VALUES = {
+    "Exposure": 0,
+    "Brightness": 0,
+    "Contrast": 100,
+    "Highlights": 0,
+    "Shadows": 0,
+    "Temperature": 0,
+    "Tint": 0,
+    "Saturation": 100,
+    "Shadow Tint": 0,
+    "Highlight Tint": 0,
+    "Red Scale": 100,
+    "Green Scale": 100,
+    "Blue Scale": 100,
+    "Clarity": 0,
+    "Vignette": 0,
+    "Blur": 0,
+    "Sharpen": 0,
+}
 
 
 def img_to_data_uri(img, png=False):
@@ -59,12 +87,50 @@ def create_preview(img, max_dim=1280):
 def current_params(img):
     return dict(
         img=img,
+        rotation_angle=rotation_angle,
+        flip_h=controls["Flip H"].value,
+        flip_v=controls["Flip V"].value,
         exposure=controls["Exposure"].value,
+        brightness=controls["Brightness"].value,
         contrast=controls["Contrast"].value / 100.0,
-        shadows=controls["Shadows"].value,
         temperature=controls["Temperature"].value,
+        shadows=controls["Shadows"].value,
         saturation=controls["Saturation"].value / 100.0,
+        r_scale=controls["Red Scale"].value / 100.0,
+        g_scale=controls["Green Scale"].value / 100.0,
+        b_scale=controls["Blue Scale"].value / 100.0,
+        vignette=controls["Vignette"].value,
+        blur=int(controls["Blur"].value),
+        sharpen=controls["Sharpen"].value,
+        grayscale=controls["Grayscale"].value,
     )
+
+
+def extra_effects(img):
+    return run_extra_effects_pipeline(
+        img,
+        highlights=controls["Highlights"].value,
+        clarity=controls["Clarity"].value,
+        tint=controls["Tint"].value,
+        shadow_tint=controls["Shadow Tint"].value,
+        highlight_tint=controls["Highlight Tint"].value,
+    )
+
+
+def apply_auto_select(processed):
+    if processed is None or not controls["Auto Select"].value:
+        return processed
+    if processed.ndim == 2:
+        processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+    mask = extract_edge_mask(processed)
+    if mask is None:
+        return processed
+    m = cv2.resize(mask, (processed.shape[1], processed.shape[0]))
+    m3 = np.repeat(m[:, :, np.newaxis], 3, axis=2)
+    dimmed = processed.astype(np.float32) * 0.35
+    return np.clip(
+        processed.astype(np.float32) * m3 + dimmed * (1.0 - m3), 0, 255
+    ).astype(np.uint8)
 
 
 def apply_adjustments():
@@ -72,6 +138,8 @@ def apply_adjustments():
     if original is None or canvas_image is None:
         return
     processed = process_image(**current_params(preview))
+    processed = extra_effects(processed)
+    processed = apply_auto_select(processed)
     canvas_image.src = img_to_data_uri(processed)
     canvas_image.visible = True
     placeholder.visible = False
@@ -111,6 +179,24 @@ def slider_row(label, value, lo=-100, hi=100):
     )
 
 
+def toggle_row(label):
+    switch = ft.Switch(
+        label=label,
+        value=False,
+        active_color=ACCENT_BLUE,
+        label_text_style=ft.TextStyle(color=TEXT_MAIN, size=11),
+        tooltip="Auto select the main subject"
+        if label == "Auto Select"
+        else None,
+        on_change=lambda e: apply_adjustments(),
+    )
+    controls[label] = switch
+    return ft.Container(
+        padding=ft.Padding.symmetric(horizontal=10, vertical=0),
+        content=switch,
+    )
+
+
 def thumbnail_item(filename, active=False):
     return ft.Container(
         width=85,
@@ -140,6 +226,22 @@ def thumbnail_item(filename, active=False):
     )
 
 
+def rotate_clicked(e):
+    global rotation_angle
+    rotation_angle = (rotation_angle + 90) % 360
+    apply_adjustments()
+
+
+def reset_clicked(e):
+    global rotation_angle
+    rotation_angle = 0
+    for label, value in RESET_VALUES.items():
+        controls[label].value = value
+    for label in Toggles:
+        controls[label].value = False
+    apply_adjustments()
+
+
 async def open_clicked(e):
     global original, preview
     files = await _picker.pick_files(
@@ -155,13 +257,15 @@ async def open_clicked(e):
             preview = create_preview(original)
             if filename_text is not None and files[0].name:
                 filename_text.value = files[0].name
-            apply_adjustments()
+            reset_clicked(None)
 
 
 async def save_clicked(e):
     if original is None:
         return
     processed = process_image(**current_params(original))
+    processed = extra_effects(processed)
+    processed = apply_auto_select(processed)
     path = await _picker.save_file(
         dialog_title="Save Image",
         file_name="output.png",
@@ -356,7 +460,9 @@ def main(page: ft.Page):
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
             slider_row("Exposure", 0),
+            slider_row("Brightness", 0),
             slider_row("Contrast", 100, 0, 200),
+            slider_row("Highlights", 0),
             slider_row("Shadows", 0),
         ],
     )
@@ -369,12 +475,78 @@ def main(page: ft.Page):
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
             slider_row("Temperature", 0, -100, 100),
+            slider_row("Tint", 0, -100, 100),
             slider_row("Saturation", 100, 0, 200),
+            slider_row("Shadow Tint", 0, -100, 100),
+            slider_row("Highlight Tint", 0, -100, 100),
+        ],
+    )
+
+    channel_group = ft.ExpansionTile(
+        title=ft.Text(
+            "Channels", size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN
+        ),
+        expanded=False,
+        controls_padding=ft.Padding.symmetric(horizontal=10),
+        controls=[
+            slider_row("Red Scale", 100, 0, 200),
+            slider_row("Green Scale", 100, 0, 200),
+            slider_row("Blue Scale", 100, 0, 200),
+        ],
+    )
+
+    effects_group = ft.ExpansionTile(
+        title=ft.Text(
+            "Effects", size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN
+        ),
+        expanded=False,
+        controls_padding=ft.Padding.symmetric(horizontal=10),
+        controls=[
+            slider_row("Clarity", 0, -100, 100),
+            slider_row("Vignette", 0, 0, 100),
+            slider_row("Blur", 0, 0, 20),
+            slider_row("Sharpen", 0, 0, 100),
+        ],
+    )
+
+    transform_group = ft.ExpansionTile(
+        title=ft.Text(
+            "Transform", size=12, weight=ft.FontWeight.BOLD, color=TEXT_MAIN
+        ),
+        expanded=False,
+        controls_padding=ft.Padding.symmetric(horizontal=10),
+        controls=[
+            toggle_row("Flip H"),
+            toggle_row("Flip V"),
+            toggle_row("Grayscale"),
+            toggle_row("Auto Select"),
+        ],
+    )
+
+    action_row = ft.Row(
+        alignment=ft.MainAxisAlignment.SPACE_AROUND,
+        controls=[
+            ft.TextButton(
+                "Rotate",
+                icon=ft.Icons.ROTATE_RIGHT,
+                style=ft.ButtonStyle(color=TEXT_MAIN),
+                on_click=rotate_clicked,
+            ),
+            ft.Button(
+                "Reset",
+                icon=ft.Icons.RESTART_ALT,
+                style=ft.ButtonStyle(
+                    color="#FFFFFF",
+                    bgcolor="#8B0000",
+                    shape=ft.RoundedRectangleBorder(radius=4),
+                ),
+                on_click=reset_clicked,
+            ),
         ],
     )
 
     right_panel = ft.Container(
-        width=300,
+        width=320,
         bgcolor=BG_PANEL,
         border=ft.Border.only(left=ft.BorderSide(1, BORDER_COLOR)),
         padding=10,
@@ -385,6 +557,10 @@ def main(page: ft.Page):
                 histogram_card,
                 light_group,
                 color_group,
+                channel_group,
+                effects_group,
+                transform_group,
+                action_row,
             ],
         ),
     )

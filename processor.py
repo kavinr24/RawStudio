@@ -272,3 +272,174 @@ def get_histogram_image(img, width=256, height=120):
             )
 
     return hist_canvas
+
+
+def extract_edge_mask(
+    image_data,
+    click_pos=None,
+    min_val=50,
+    max_val=150,
+    padding=5,
+    blur_amount=15,
+):
+    if image_data is None:
+        return None
+
+    frame_h, frame_w = image_data.shape[:2]
+
+    if click_pos is None:
+        click_pos = (frame_w // 2, frame_h // 2)
+
+    if len(image_data.shape) == 3:
+        mono_frame = cv2.cvtColor(image_data, cv2.COLOR_BGR2GRAY)
+    else:
+        mono_frame = image_data
+
+    smoothed_frame = cv2.GaussianBlur(mono_frame, (5, 5), 0)
+    detected_edges = cv2.Canny(smoothed_frame, min_val, max_val)
+
+    fill_grid = np.zeros((frame_h + 2, frame_w + 2), dtype=np.uint8)
+    fill_grid[1:-1, 1:-1] = detected_edges
+
+    working_canvas = mono_frame.copy()
+    fill_flags = 4 | (255 << 8) | cv2.FLOODFILL_FIXED_RANGE | cv2.FLOODFILL_MASK_ONLY
+
+    cv2.floodFill(
+        working_canvas,
+        fill_grid,
+        click_pos,
+        newVal=255,
+        loDiff=20,
+        upDiff=20,
+        flags=fill_flags,
+    )
+
+    cropped_selection = fill_grid[1:-1, 1:-1].astype(np.uint8)
+
+    box_size = max(3, padding)
+    morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (box_size, box_size))
+
+    cleaned_selection = cv2.morphologyEx(cropped_selection, cv2.MORPH_CLOSE, morph_kernel)
+    expanded_selection = cv2.dilate(cleaned_selection, morph_kernel, iterations=1)
+
+    if blur_amount > 0:
+        kernel_dim = blur_amount * 2 + 1
+        normalized_mask = expanded_selection.astype(np.float32) / 255.0
+        smoothed_mask = cv2.GaussianBlur(normalized_mask, (kernel_dim, kernel_dim), 0)
+        return np.clip(smoothed_mask, 0.0, 1.0)
+
+    return (expanded_selection > 0).astype(np.float32)
+
+
+def adjust_bright_tones(frame_buffer, highlight_amount):
+    if highlight_amount == 0:
+        return frame_buffer
+
+    blue_ch = frame_buffer[:, :, 0]
+    green_ch = frame_buffer[:, :, 1]
+    red_ch = frame_buffer[:, :, 2]
+
+    lum_map = 0.2126 * red_ch + 0.7152 * green_ch + 0.0722 * blue_ch
+
+    bright_region = np.clip((lum_map - 0.5) / 0.5, 0.0, 1.0)
+    blend_curve = 0.5 * (1.0 - np.cos(np.pi * bright_region))
+
+    strength_factor = highlight_amount / 100.0
+
+    if strength_factor < 0:
+        curve_power = 1.0 + abs(strength_factor) * 1.5
+        compressed_lum = 1.0 - np.power(np.maximum(0.0, 1.0 - lum_map), curve_power)
+        scaling_ratio = np.where(
+            lum_map > 1e-6, compressed_lum / np.maximum(lum_map, 1e-6), 1.0
+        )
+        mask_multiplier = (scaling_ratio * blend_curve) + (1.0 - blend_curve)
+        frame_buffer = np.clip(
+            frame_buffer * mask_multiplier[:, :, np.newaxis], 0.0, 1.0
+        )
+    else:
+        gain_value = 1.0 + (strength_factor * 0.4 * blend_curve[:, :, np.newaxis])
+        frame_buffer = np.clip(frame_buffer * gain_value, 0.0, 1.0)
+
+    return frame_buffer
+
+
+def adjust_midtone_clarity(frame_buffer, clarity_amount):
+    if clarity_amount == 0:
+        return frame_buffer
+
+    blue_ch = frame_buffer[:, :, 0]
+    green_ch = frame_buffer[:, :, 1]
+    red_ch = frame_buffer[:, :, 2]
+
+    lum_map = 0.2126 * red_ch + 0.7152 * green_ch + 0.0722 * blue_ch
+
+    blurred_lum = cv2.GaussianBlur(lum_map, (21, 21), 0)
+    detail_frequencies = lum_map - blurred_lum
+
+    mid_weights = np.clip(1.0 - np.abs(lum_map - 0.5) * 2.0, 0.0, 1.0)
+
+    clarity_boost = detail_frequencies * mid_weights * (clarity_amount / 100.0) * 0.8
+    updated_lum = np.clip(lum_map + clarity_boost, 0.0, 1.0)
+
+    tone_ratio = np.where(lum_map > 1e-6, updated_lum / np.maximum(lum_map, 1e-6), 1.0)
+    frame_buffer = np.clip(frame_buffer * tone_ratio[:, :, np.newaxis], 0.0, 1.0)
+
+    return frame_buffer
+
+
+def adjust_green_magenta_tint(frame_buffer, tint_amount):
+    if tint_amount == 0:
+        return frame_buffer
+
+    offset_val = (tint_amount / 100.0) * 0.1
+
+    frame_buffer[:, :, 1] = np.clip(frame_buffer[:, :, 1] + offset_val, 0.0, 1.0)
+    frame_buffer[:, :, 0] = np.clip(frame_buffer[:, :, 0] - (offset_val * 0.5), 0.0, 1.0)
+    frame_buffer[:, :, 2] = np.clip(frame_buffer[:, :, 2] - (offset_val * 0.5), 0.0, 1.0)
+
+    return frame_buffer
+
+
+def apply_split_color_grading(frame_buffer, shadow_grade, highlight_grade):
+    if shadow_grade == 0 and highlight_grade == 0:
+        return frame_buffer
+
+    blue_ch = frame_buffer[:, :, 0]
+    green_ch = frame_buffer[:, :, 1]
+    red_ch = frame_buffer[:, :, 2]
+
+    lum_map = 0.2126 * red_ch + 0.7152 * green_ch + 0.0722 * blue_ch
+
+    dark_mask = np.clip((0.5 - lum_map) / 0.5, 0.0, 1.0)
+    light_mask = np.clip((lum_map - 0.5) / 0.5, 0.0, 1.0)
+
+    if shadow_grade != 0:
+        dark_shift = (shadow_grade / 100.0) * 0.12 * dark_mask
+        frame_buffer[:, :, 2] = np.clip(frame_buffer[:, :, 2] + dark_shift, 0.0, 1.0)
+        frame_buffer[:, :, 0] = np.clip(frame_buffer[:, :, 0] - dark_shift, 0.0, 1.0)
+
+    if highlight_grade != 0:
+        light_shift = (highlight_grade / 100.0) * 0.12 * light_mask
+        frame_buffer[:, :, 2] = np.clip(frame_buffer[:, :, 2] + light_shift, 0.0, 1.0)
+        frame_buffer[:, :, 0] = np.clip(frame_buffer[:, :, 0] - light_shift, 0.0, 1.0)
+
+    return frame_buffer
+
+
+def run_extra_effects_pipeline(
+    input_img,
+    highlights=0,
+    clarity=0,
+    tint=0,
+    shadow_tint=0,
+    highlight_tint=0,
+):
+    if input_img is None:
+        return None
+
+    frame_buffer = input_img.copy().astype(np.float32) / 255.0
+    frame_buffer = adjust_bright_tones(frame_buffer, highlights)
+    frame_buffer = adjust_midtone_clarity(frame_buffer, clarity)
+    frame_buffer = adjust_green_magenta_tint(frame_buffer, tint)
+    frame_buffer = apply_split_color_grading(frame_buffer, shadow_tint, highlight_tint)
+    return (np.clip(frame_buffer, 0.0, 1.0) * 255.0).astype(np.uint8)

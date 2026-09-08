@@ -47,6 +47,8 @@ placeholder = None
 histogram_image = None
 filename_text = None
 rotation_angle = 0
+_render_busy = False
+_render_pending = False
 
 Toggles = ("Flip H", "Flip V", "Grayscale", "Auto Select")
 
@@ -85,7 +87,7 @@ def img_to_data_uri(img, png=False):
     return "data:image/" + ("png" if png else "jpeg") + ";base64," + base64.b64encode(buf).decode("ascii")
 
 
-def create_preview(img, max_dim=1280):
+def create_preview(img, max_dim=900):
     h, w = img.shape[:2]
     if max(h, w) > max_dim:
         scale = max_dim / float(max(h, w))
@@ -153,22 +155,34 @@ def _compute_processed(img):
 
 
 async def apply_adjustments():
-    global canvas_image, placeholder, histogram_image
+    global canvas_image, placeholder, histogram_image, _render_busy, _render_pending
     if original is None or preview is None or canvas_image is None:
         return
+    if _render_busy:
+        _render_pending = True
+        return
+    _render_busy = True
+    _render_pending = False
     try:
-        processed = await asyncio.to_thread(_compute_processed, preview)
-        canvas_image.src = await asyncio.to_thread(img_to_data_uri, processed)
-        canvas_image.visible = True
-        placeholder.visible = False
-        histogram_image.src = await asyncio.to_thread(
-            img_to_data_uri, get_histogram_image(processed), True
-        )
-    except Exception as ex:
-        print(f"[RawStudio] render error: {ex!r}")
+        while True:
+            try:
+                processed = await asyncio.to_thread(_compute_processed, preview)
+                canvas_image.src = await asyncio.to_thread(img_to_data_uri, processed)
+                canvas_image.visible = True
+                placeholder.visible = False
+                histogram_image.src = await asyncio.to_thread(
+                    img_to_data_uri, get_histogram_image(processed), True
+                )
+            except Exception as ex:
+                print(f"[RawStudio] render error: {ex!r}")
+            finally:
+                if _page is not None:
+                    _page.update()
+            if not _render_pending:
+                break
+            _render_pending = False
     finally:
-        if _page is not None:
-            _page.update()
+        _render_busy = False
 
 
 async def _on_slider(e, value_text):

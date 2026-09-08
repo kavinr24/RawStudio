@@ -2,6 +2,23 @@ import cv2
 import numpy as np
 
 
+def _build_gamma_to_linear_lut():
+    x = np.arange(256, dtype=np.float32) / 255.0
+    linear = np.zeros_like(x)
+    mask = x <= 0.04045
+    linear[mask] = x[mask] / 12.92
+    linear[~mask] = ((x[~mask] + 0.055) / 1.055) ** 2.4
+    return linear
+
+
+_GAMMA_TO_LINEAR_LUT = _build_gamma_to_linear_lut()
+
+
+def _gamma_to_linear(channel):
+    idx = np.clip((channel * 255.0 + 0.5).astype(np.int32), 0, 255)
+    return _GAMMA_TO_LINEAR_LUT[idx]
+
+
 def process_image(
     img,
     rotation_angle=0,
@@ -87,18 +104,9 @@ def process_image(
             adjusted.astype(np.float32) / 255.0
         )
 
-        def gamma_to_linear(channel):
-            mask = channel <= 0.04045
-            channel_linear = np.zeros_like(channel)
-            channel_linear[mask] = channel[mask] / 12.92
-            channel_linear[~mask] = (
-                (channel[~mask] + 0.055) / 1.055
-            ) ** 2.4
-            return channel_linear
-
-        r_linear = gamma_to_linear(r_chan)
-        g_linear = gamma_to_linear(g_chan)
-        b_linear = gamma_to_linear(b_chan)
+        r_linear = _gamma_to_linear(r_chan)
+        g_linear = _gamma_to_linear(g_chan)
+        b_linear = _gamma_to_linear(b_chan)
 
         x_matrix = (
             r_linear * 0.4124564

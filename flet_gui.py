@@ -1,5 +1,8 @@
+import asyncio
 import base64
 import os
+import sys
+import warnings
 
 import cv2
 import flet as ft
@@ -11,6 +14,14 @@ from processor import (
     process_image,
     run_extra_effects_pipeline,
 )
+
+if sys.platform == "win32":
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        except Exception:
+            pass
 
 BG_DARK = "#121212"
 BG_PANEL = "#1E1E1E"
@@ -133,24 +144,56 @@ def apply_auto_select(processed):
     ).astype(np.uint8)
 
 
-def apply_adjustments():
-    global canvas_image, placeholder, histogram_image
-    if original is None or canvas_image is None:
-        return
-    processed = process_image(**current_params(preview))
+def _compute_processed(img):
+    processed = process_image(**current_params(img))
+    if processed.ndim == 2:
+        processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
     processed = extra_effects(processed)
-    processed = apply_auto_select(processed)
-    canvas_image.src = img_to_data_uri(processed)
-    canvas_image.visible = True
-    placeholder.visible = False
-    histogram_image.src = img_to_data_uri(get_histogram_image(processed), png=True)
+    return apply_auto_select(processed)
+
+
+async def apply_adjustments():
+    global canvas_image, placeholder, histogram_image
+    if original is None or preview is None or canvas_image is None:
+        return
+    try:
+        processed = await asyncio.to_thread(_compute_processed, preview)
+        canvas_image.src = await asyncio.to_thread(img_to_data_uri, processed)
+        canvas_image.visible = True
+        placeholder.visible = False
+        histogram_image.src = await asyncio.to_thread(
+            img_to_data_uri, get_histogram_image(processed), True
+        )
+    except Exception as ex:
+        print(f"[RawStudio] render error: {ex!r}")
+    finally:
+        if _page is not None:
+            _page.update()
+
+
+async def _on_slider(e, value_text):
+    value_text.value = f"{e.control.value:.0f}"
     if _page is not None:
         _page.update()
 
 
-def _on_slider(e, value_text):
+async def _on_slider_end(e, value_text):
     value_text.value = f"{e.control.value:.0f}"
-    apply_adjustments()
+    await apply_adjustments()
+
+
+def _make_slider_change(value_text):
+    async def handler(e):
+        await _on_slider(e, value_text)
+
+    return handler
+
+
+def _make_slider_change_end(value_text):
+    async def handler(e):
+        await _on_slider_end(e, value_text)
+
+    return handler
 
 
 def slider_row(label, value, lo=-100, hi=100):
@@ -161,7 +204,8 @@ def slider_row(label, value, lo=-100, hi=100):
         value=value,
         active_color=ACCENT_BLUE,
         inactive_color=BG_INPUT,
-        on_change=lambda e: _on_slider(e, value_text),
+        on_change=_make_slider_change(value_text),
+        on_change_end=_make_slider_change_end(value_text),
     )
     controls[label] = slider
     return ft.Column(
@@ -180,6 +224,9 @@ def slider_row(label, value, lo=-100, hi=100):
 
 
 def toggle_row(label):
+    async def on_toggle(e):
+        await apply_adjustments()
+
     switch = ft.Switch(
         label=label,
         value=False,
@@ -188,7 +235,7 @@ def toggle_row(label):
         tooltip="Auto select the main subject"
         if label == "Auto Select"
         else None,
-        on_change=lambda e: apply_adjustments(),
+        on_change=on_toggle,
     )
     controls[label] = switch
     return ft.Container(
@@ -226,20 +273,22 @@ def thumbnail_item(filename, active=False):
     )
 
 
-def rotate_clicked(e):
+async def rotate_clicked(e):
     global rotation_angle
     rotation_angle = (rotation_angle + 90) % 360
-    apply_adjustments()
+    await apply_adjustments()
 
 
-def reset_clicked(e):
+async def reset_clicked(e):
     global rotation_angle
     rotation_angle = 0
     for label, value in RESET_VALUES.items():
         controls[label].value = value
     for label in Toggles:
         controls[label].value = False
-    apply_adjustments()
+    if _page is not None:
+        _page.update()
+    await apply_adjustments()
 
 
 async def open_clicked(e):
@@ -257,21 +306,19 @@ async def open_clicked(e):
             preview = create_preview(original)
             if filename_text is not None and files[0].name:
                 filename_text.value = files[0].name
-            reset_clicked(None)
+            await reset_clicked(None)
 
 
 async def save_clicked(e):
     if original is None:
         return
-    processed = process_image(**current_params(original))
-    processed = extra_effects(processed)
-    processed = apply_auto_select(processed)
     path = await _picker.save_file(
         dialog_title="Save Image",
         file_name="output.png",
         allowed_extensions=["png", "jpg", "jpeg", "bmp"],
     )
     if path:
+        processed = await asyncio.to_thread(_compute_processed, original)
         cv2.imwrite(path, processed)
 
 
@@ -618,6 +665,8 @@ def main(page: ft.Page):
         )
     )
 
+
+app = ft.run(main, export_asgi_app=True)
 
 if __name__ == "__main__":
     ft.run(main)

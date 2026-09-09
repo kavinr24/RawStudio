@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import os
 import sys
 import warnings
@@ -14,6 +15,11 @@ from processor import (
     process_image,
     run_extra_effects_pipeline,
 )
+
+_log = logging.getLogger("rawstudio")
+
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+MAX_PIXELS = 40_000_000
 
 if sys.platform == "win32":
     with warnings.catch_warnings():
@@ -76,6 +82,18 @@ def img_to_data_uri(img, png=False):
     else:
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
     return "data:image/" + ("png" if png else "jpeg") + ";base64," + base64.b64encode(buf).decode("ascii")
+
+
+def notify(st, message):
+    try:
+        st.page.show_dialog(
+            ft.SnackBar(
+                content=message,
+                duration=4000,
+            )
+        )
+    except Exception as ex:
+        _log.error("Failed to show notification %r: %r", message, ex)
 
 
 def create_preview(img, max_dim=PREVIEW_MAX_DIM):
@@ -182,8 +200,9 @@ class EditorState:
                     self.histogram_image.src = await asyncio.to_thread(
                         img_to_data_uri, get_histogram_image(processed), True
                     )
-                except Exception as ex:
-                    print(f"[RawStudio] render error: {ex!r}")
+                except Exception:
+                    _log.exception("Render failed")
+                    notify(self, "Render error, please retry.")
                 finally:
                     self.page.update()
                 if not self.render_pending:
@@ -333,35 +352,61 @@ async def open_clicked(e):
         file_type=ft.FilePickerFileType.IMAGE,
         with_data=True,
     )
-    if files and files[0].bytes:
-        if len(files[0].bytes) > 60 * 1024 * 1024:
-            print("[RawStudio] upload too large, skipping")
-            return
-        arr = np.frombuffer(files[0].bytes, np.uint8)
-        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if img is not None:
-            st.original = img
-            st.preview = create_preview(st.original)
-            st.fit_image_box()
-            await reset_clicked(e)
+    if not files or not files[0].bytes:
+        return
+    if len(files[0].bytes) > MAX_UPLOAD_BYTES:
+        _log.warning("Upload too large (%d bytes), skipped", len(files[0].bytes))
+        notify(st, "File is too large (max 60 MB).")
+        return
+    try:
+        img = cv2.imdecode(
+            np.frombuffer(files[0].bytes, np.uint8), cv2.IMREAD_COLOR
+        )
+    except cv2.error:
+        _log.exception("Image decode failed")
+        notify(st, "Could not read that image.")
+        return
+    if img is None:
+        notify(st, "Could not read that image.")
+        return
+    if img.shape[0] * img.shape[1] > MAX_PIXELS:
+        _log.warning(
+            "Image too large (%d x %d), skipped", img.shape[1], img.shape[0]
+        )
+        notify(st, "Image is too large (max 40 megapixels).")
+        return
+    st.original = img
+    st.preview = create_preview(st.original)
+    st.fit_image_box()
+    await reset_clicked(e)
 
 
 async def save_clicked(e):
     st = e.page.data
     if st.original is None:
         return
-    processed = await st._render_with_slot(st.original)
-    ok, buf = cv2.imencode(".png", processed)
-    if not ok:
-        return
-    result = await st.picker.save_file(
-        dialog_title="Save Image",
-        file_name="output.png",
-        allowed_extensions=["png", "jpg", "jpeg", "bmp"],
-        src_bytes=buf.tobytes(),
-    )
-    if result and result.path:
-        cv2.imwrite(result.path, processed)
+    try:
+        processed = await st._render_with_slot(st.original)
+        ok, buf = cv2.imencode(".png", processed)
+        if not ok:
+            _log.error("Could not encode image as PNG")
+            notify(st, "Could not encode image.")
+            return
+        result = await st.picker.save_file(
+            dialog_title="Save Image",
+            file_name="output.png",
+            allowed_extensions=["png", "jpg", "jpeg", "bmp"],
+            src_bytes=buf.tobytes(),
+        )
+        if result and result.path:
+            try:
+                cv2.imwrite(result.path, processed)
+            except Exception:
+                _log.exception("Could not write file to %s", result.path)
+                notify(st, "Could not save the file.")
+    except Exception:
+        _log.exception("Save failed")
+        notify(st, "Save failed.")
 
 
 def main(page: ft.Page):

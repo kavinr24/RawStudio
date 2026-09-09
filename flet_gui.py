@@ -8,6 +8,7 @@ import warnings
 import cv2
 import flet as ft
 import numpy as np
+from starlette.websockets import WebSocketDisconnect
 
 from processor import (
     extract_edge_mask,
@@ -721,7 +722,24 @@ def main(page: ft.Page):
 
 _assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
-app = ft.run(main, export_asgi_app=True, assets_dir=_assets_dir)
+
+class _QuietSocketTeardown:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "websocket":
+            await self.app(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        except WebSocketDisconnect as exc:
+            _log.debug("Websocket disconnected: %r", exc)
+
+
+app = _QuietSocketTeardown(
+    ft.run(main, export_asgi_app=True, assets_dir=_assets_dir)
+)
 
 if __name__ == "__main__":
     ft.run(main, assets_dir=_assets_dir)

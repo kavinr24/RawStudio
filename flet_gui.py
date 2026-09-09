@@ -37,21 +37,6 @@ TRANSPARENT_PNG = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
 
-controls = {}
-original = None
-preview = None
-_page = None
-_picker = None
-canvas_image = None
-canvas_viewer = None
-placeholder = None
-histogram_image = None
-rotation_angle = 0
-_canvas_w = 0.0
-_canvas_h = 0.0
-_render_busy = False
-_render_pending = False
-
 Toggles = ("Flip H", "Flip V", "Grayscale", "Auto Select")
 
 RESET_VALUES = {
@@ -74,6 +59,12 @@ RESET_VALUES = {
     "Sharpen": 0,
 }
 
+PREVIEW_MAX_DIM = 700 if os.environ.get("RENDER") else 900
+
+# Process-wide render limiter so a handful of concurrent sessions can't
+# saturate the server CPU with simultaneous photo processing.
+_render_slots = asyncio.Semaphore(2)
+
 
 def img_to_data_uri(img, png=False):
     if img is None:
@@ -89,7 +80,7 @@ def img_to_data_uri(img, png=False):
     return "data:image/" + ("png" if png else "jpeg") + ";base64," + base64.b64encode(buf).decode("ascii")
 
 
-def create_preview(img, max_dim=900):
+def create_preview(img, max_dim=PREVIEW_MAX_DIM):
     h, w = img.shape[:2]
     if max(h, w) > max_dim:
         scale = max_dim / float(max(h, w))
@@ -99,103 +90,137 @@ def create_preview(img, max_dim=900):
     return img.copy()
 
 
-def current_params(img):
-    return dict(
-        img=img,
-        rotation_angle=rotation_angle,
-        flip_h=controls["Flip H"].value,
-        flip_v=controls["Flip V"].value,
-        exposure=controls["Exposure"].value,
-        brightness=controls["Brightness"].value,
-        contrast=controls["Contrast"].value / 100.0,
-        temperature=controls["Temperature"].value,
-        shadows=controls["Shadows"].value,
-        saturation=controls["Saturation"].value / 100.0,
-        r_scale=controls["Red Scale"].value / 100.0,
-        g_scale=controls["Green Scale"].value / 100.0,
-        b_scale=controls["Blue Scale"].value / 100.0,
-        vignette=controls["Vignette"].value,
-        blur=int(controls["Blur"].value),
-        sharpen=controls["Sharpen"].value,
-        grayscale=controls["Grayscale"].value,
-    )
+class EditorState:
+    def __init__(self, page):
+        self.page = page
+        self.picker = ft.FilePicker()
+        self.controls = {}
+        self.original = None
+        self.preview = None
+        self.canvas_image = None
+        self.canvas_viewer = None
+        self.placeholder = None
+        self.histogram_image = None
+        self.rotation_angle = 0
+        self.canvas_w = 0.0
+        self.canvas_h = 0.0
+        self.render_busy = False
+        self.render_pending = False
 
+    def current_params(self, img):
+        return dict(
+            img=img,
+            rotation_angle=self.rotation_angle,
+            flip_h=self.controls["Flip H"].value,
+            flip_v=self.controls["Flip V"].value,
+            exposure=self.controls["Exposure"].value,
+            brightness=self.controls["Brightness"].value,
+            contrast=self.controls["Contrast"].value / 100.0,
+            temperature=self.controls["Temperature"].value,
+            shadows=self.controls["Shadows"].value,
+            saturation=self.controls["Saturation"].value / 100.0,
+            r_scale=self.controls["Red Scale"].value / 100.0,
+            g_scale=self.controls["Green Scale"].value / 100.0,
+            b_scale=self.controls["Blue Scale"].value / 100.0,
+            vignette=self.controls["Vignette"].value,
+            blur=int(self.controls["Blur"].value),
+            sharpen=self.controls["Sharpen"].value,
+            grayscale=self.controls["Grayscale"].value,
+        )
 
-def extra_effects(img):
-    return run_extra_effects_pipeline(
-        img,
-        highlights=controls["Highlights"].value,
-        clarity=controls["Clarity"].value,
-        tint=controls["Tint"].value,
-        shadow_tint=controls["Shadow Tint"].value,
-        highlight_tint=controls["Highlight Tint"].value,
-    )
+    def extra_effects(self, img):
+        return run_extra_effects_pipeline(
+            img,
+            highlights=self.controls["Highlights"].value,
+            clarity=self.controls["Clarity"].value,
+            tint=self.controls["Tint"].value,
+            shadow_tint=self.controls["Shadow Tint"].value,
+            highlight_tint=self.controls["Highlight Tint"].value,
+        )
 
+    def apply_auto_select(self, processed):
+        if processed is None or not self.controls["Auto Select"].value:
+            return processed
+        if processed.ndim == 2:
+            processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+        mask = extract_edge_mask(processed)
+        if mask is None:
+            return processed
+        m = cv2.resize(mask, (processed.shape[1], processed.shape[0]))
+        m3 = np.repeat(m[:, :, np.newaxis], 3, axis=2)
+        dimmed = processed.astype(np.float32) * 0.35
+        return np.clip(
+            processed.astype(np.float32) * m3 + dimmed * (1.0 - m3), 0, 255
+        ).astype(np.uint8)
 
-def apply_auto_select(processed):
-    if processed is None or not controls["Auto Select"].value:
-        return processed
-    if processed.ndim == 2:
-        processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
-    mask = extract_edge_mask(processed)
-    if mask is None:
-        return processed
-    m = cv2.resize(mask, (processed.shape[1], processed.shape[0]))
-    m3 = np.repeat(m[:, :, np.newaxis], 3, axis=2)
-    dimmed = processed.astype(np.float32) * 0.35
-    return np.clip(
-        processed.astype(np.float32) * m3 + dimmed * (1.0 - m3), 0, 255
-    ).astype(np.uint8)
+    def compute_processed(self, img):
+        processed = process_image(**self.current_params(img))
+        if processed.ndim == 2:
+            processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
+        processed = self.extra_effects(processed)
+        return self.apply_auto_select(processed)
 
+    async def _render_with_slot(self, img):
+        async with _render_slots:
+            return await asyncio.to_thread(self.compute_processed, img)
 
-def _compute_processed(img):
-    processed = process_image(**current_params(img))
-    if processed.ndim == 2:
-        processed = cv2.cvtColor(processed, cv2.COLOR_GRAY2BGR)
-    processed = extra_effects(processed)
-    return apply_auto_select(processed)
+    async def apply_adjustments(self):
+        if self.original is None or self.preview is None or self.canvas_image is None:
+            return
+        if self.render_busy:
+            self.render_pending = True
+            return
+        self.render_busy = True
+        self.render_pending = False
+        try:
+            while True:
+                try:
+                    processed = await self._render_with_slot(self.preview)
+                    self.canvas_image.src = await asyncio.to_thread(
+                        img_to_data_uri, processed
+                    )
+                    self.canvas_image.visible = True
+                    self.placeholder.visible = False
+                    self.histogram_image.src = await asyncio.to_thread(
+                        img_to_data_uri, get_histogram_image(processed), True
+                    )
+                except Exception as ex:
+                    print(f"[RawStudio] render error: {ex!r}")
+                finally:
+                    self.page.update()
+                if not self.render_pending:
+                    break
+                self.render_pending = False
+        finally:
+            self.render_busy = False
 
-
-async def apply_adjustments():
-    global canvas_image, placeholder, histogram_image, _render_busy, _render_pending
-    if original is None or preview is None or canvas_image is None:
-        return
-    if _render_busy:
-        _render_pending = True
-        return
-    _render_busy = True
-    _render_pending = False
-    try:
-        while True:
-            try:
-                processed = await asyncio.to_thread(_compute_processed, preview)
-                canvas_image.src = await asyncio.to_thread(img_to_data_uri, processed)
-                canvas_image.visible = True
-                placeholder.visible = False
-                histogram_image.src = await asyncio.to_thread(
-                    img_to_data_uri, get_histogram_image(processed), True
-                )
-            except Exception as ex:
-                print(f"[RawStudio] render error: {ex!r}")
-            finally:
-                if _page is not None:
-                    _page.update()
-            if not _render_pending:
-                break
-            _render_pending = False
-    finally:
-        _render_busy = False
+    def fit_image_box(self):
+        img = self.preview if self.preview is not None else self.original
+        if img is None or self.canvas_image is None or self.canvas_w <= 0 or self.canvas_h <= 0:
+            return
+        h, w = img.shape[:2]
+        s = min(self.canvas_w / w, self.canvas_h / h)
+        iw = max(1, int(round(w * s)))
+        ih = max(1, int(round(h * s)))
+        m = max((self.canvas_w - iw) / 2, (self.canvas_h - ih) / 2) * 1.1
+        self.canvas_image.width = iw
+        self.canvas_image.height = ih
+        to_update = [self.canvas_image]
+        if self.canvas_viewer is not None:
+            self.canvas_viewer.boundary_margin = ft.Margin.all(m)
+            to_update.append(self.canvas_viewer)
+        self.page.update(*to_update)
 
 
 async def _on_slider(e, value_text):
+    st = e.page.data
     value_text.value = f"{e.control.value:.0f}"
-    if _page is not None:
-        _page.update(value_text)
+    st.page.update(value_text)
 
 
 async def _on_slider_end(e, value_text):
     value_text.value = f"{e.control.value:.0f}"
-    await apply_adjustments()
+    await e.page.data.apply_adjustments()
 
 
 def _make_slider_change(value_text):
@@ -212,7 +237,7 @@ def _make_slider_change_end(value_text):
     return handler
 
 
-def slider_row(label, value, lo=-100, hi=100):
+def slider_row(st, label, value, lo=-100, hi=100):
     value_text = ft.Text(f"{value:.0f}", color=TEXT_MUTED, size=11)
     slider = ft.Slider(
         min=lo,
@@ -223,7 +248,7 @@ def slider_row(label, value, lo=-100, hi=100):
         on_change=_make_slider_change(value_text),
         on_change_end=_make_slider_change_end(value_text),
     )
-    controls[label] = slider
+    st.controls[label] = slider
     return ft.Column(
         spacing=2,
         controls=[
@@ -239,9 +264,9 @@ def slider_row(label, value, lo=-100, hi=100):
     )
 
 
-def toggle_row(label):
+def toggle_row(st, label):
     async def on_toggle(e):
-        await apply_adjustments()
+        await e.page.data.apply_adjustments()
 
     switch = ft.Switch(
         label=label,
@@ -253,108 +278,97 @@ def toggle_row(label):
         else None,
         on_change=on_toggle,
     )
-    controls[label] = switch
+    st.controls[label] = switch
     return ft.Container(
         padding=ft.Padding.symmetric(horizontal=10, vertical=0),
         content=switch,
     )
 
 
-def _fit_image_box():
-    global canvas_image, canvas_viewer
-    img = preview if preview is not None else original
-    if img is None or canvas_image is None or _canvas_w <= 0 or _canvas_h <= 0:
-        return
-    h, w = img.shape[:2]
-    s = min(_canvas_w / w, _canvas_h / h)
-    iw = max(1, int(round(w * s)))
-    ih = max(1, int(round(h * s)))
-    m = max((_canvas_w - iw) / 2, (_canvas_h - ih) / 2) * 1.1
-    canvas_image.width = iw
-    canvas_image.height = ih
-    to_update = [canvas_image]
-    if canvas_viewer is not None:
-        canvas_viewer.boundary_margin = ft.Margin.all(m)
-        to_update.append(canvas_viewer)
-    if _page is not None:
-        _page.update(*to_update)
-
-
 async def _on_canvas_size(e):
-    global _canvas_w, _canvas_h
-    _canvas_w = e.width or 0
-    _canvas_h = e.height or 0
-    if canvas_viewer is not None:
-        await canvas_viewer.reset()
-    _fit_image_box()
+    st = e.page.data
+    st.canvas_w = e.width or 0
+    st.canvas_h = e.height or 0
+    if st.canvas_viewer is not None:
+        await st.canvas_viewer.reset()
+    st.fit_image_box()
 
 
 async def zoom_in_clicked(e):
-    if canvas_viewer is not None:
-        await canvas_viewer.zoom(1.25)
+    st = e.page.data
+    if st.canvas_viewer is not None:
+        await st.canvas_viewer.zoom(1.25)
 
 
 async def zoom_out_clicked(e):
-    if canvas_viewer is not None:
-        await canvas_viewer.zoom(0.8)
+    st = e.page.data
+    if st.canvas_viewer is not None:
+        await st.canvas_viewer.zoom(0.8)
 
 
 async def rotate_clicked(e):
-    global rotation_angle
-    rotation_angle = (rotation_angle + 90) % 360
-    if canvas_viewer is not None:
-        await canvas_viewer.reset()
-    _fit_image_box()
-    await apply_adjustments()
+    st = e.page.data
+    st.rotation_angle = (st.rotation_angle + 90) % 360
+    if st.canvas_viewer is not None:
+        await st.canvas_viewer.reset()
+    st.fit_image_box()
+    await st.apply_adjustments()
 
 
 async def reset_clicked(e):
-    global rotation_angle
-    rotation_angle = 0
-    if canvas_viewer is not None:
-        await canvas_viewer.reset()
+    st = e.page.data
+    st.rotation_angle = 0
+    if st.canvas_viewer is not None:
+        await st.canvas_viewer.reset()
     for label, value in RESET_VALUES.items():
-        controls[label].value = value
+        st.controls[label].value = value
     for label in Toggles:
-        controls[label].value = False
-    if _page is not None:
-        _page.update()
-    await apply_adjustments()
+        st.controls[label].value = False
+    st.page.update()
+    await st.apply_adjustments()
 
 
 async def open_clicked(e):
-    global original, preview
-    files = await _picker.pick_files(
+    st = e.page.data
+    files = await st.picker.pick_files(
         dialog_title="Open Image",
         file_type=ft.FilePickerFileType.IMAGE,
         with_data=True,
     )
     if files and files[0].bytes:
+        if len(files[0].bytes) > 60 * 1024 * 1024:
+            print("[RawStudio] upload too large, skipping")
+            return
         arr = np.frombuffer(files[0].bytes, np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is not None:
-            original = img
-            preview = create_preview(original)
-            _fit_image_box()
-            await reset_clicked(None)
+            st.original = img
+            st.preview = create_preview(st.original)
+            st.fit_image_box()
+            await reset_clicked(e)
 
 
 async def save_clicked(e):
-    if original is None:
+    st = e.page.data
+    if st.original is None:
         return
-    path = await _picker.save_file(
+    processed = await st._render_with_slot(st.original)
+    ok, buf = cv2.imencode(".png", processed)
+    if not ok:
+        return
+    result = await st.picker.save_file(
         dialog_title="Save Image",
         file_name="output.png",
         allowed_extensions=["png", "jpg", "jpeg", "bmp"],
+        src_bytes=buf.tobytes(),
     )
-    if path:
-        processed = await asyncio.to_thread(_compute_processed, original)
-        cv2.imwrite(path, processed)
+    if result and result.path:
+        cv2.imwrite(result.path, processed)
 
 
 def main(page: ft.Page):
-    global _page, _picker, canvas_image, canvas_viewer, placeholder, histogram_image
-    _page = page
+    st = EditorState(page)
+    page.data = st
 
     page.title = "RawStudio"
     page.padding = 0
@@ -365,9 +379,6 @@ def main(page: ft.Page):
     page.window.min_height = 720
 
     page.bgcolor = BG_DARK
-
-    file_picker = ft.FilePicker()
-    _picker = file_picker
 
     header_bar = ft.Container(
         height=40,
@@ -492,6 +503,11 @@ def main(page: ft.Page):
         expand=True,
     )
 
+    st.placeholder = placeholder
+    st.canvas_image = canvas_image
+    st.canvas_viewer = canvas_viewer
+    st.histogram_image = histogram_image
+
     histogram_card = ft.Container(
         height=100,
         bgcolor=BG_INPUT,
@@ -519,11 +535,11 @@ def main(page: ft.Page):
         expanded=True,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            slider_row("Exposure", 0),
-            slider_row("Brightness", 0),
-            slider_row("Contrast", 100, 0, 200),
-            slider_row("Highlights", 0),
-            slider_row("Shadows", 0),
+            slider_row(st, "Exposure", 0),
+            slider_row(st, "Brightness", 0),
+            slider_row(st, "Contrast", 100, 0, 200),
+            slider_row(st, "Highlights", 0),
+            slider_row(st, "Shadows", 0),
         ],
     )
 
@@ -534,11 +550,11 @@ def main(page: ft.Page):
         expanded=False,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            slider_row("Temperature", 0, -100, 100),
-            slider_row("Tint", 0, -100, 100),
-            slider_row("Saturation", 100, 0, 200),
-            slider_row("Shadow Tint", 0, -100, 100),
-            slider_row("Highlight Tint", 0, -100, 100),
+            slider_row(st, "Temperature", 0, -100, 100),
+            slider_row(st, "Tint", 0, -100, 100),
+            slider_row(st, "Saturation", 100, 0, 200),
+            slider_row(st, "Shadow Tint", 0, -100, 100),
+            slider_row(st, "Highlight Tint", 0, -100, 100),
         ],
     )
 
@@ -549,9 +565,9 @@ def main(page: ft.Page):
         expanded=False,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            slider_row("Red Scale", 100, 0, 200),
-            slider_row("Green Scale", 100, 0, 200),
-            slider_row("Blue Scale", 100, 0, 200),
+            slider_row(st, "Red Scale", 100, 0, 200),
+            slider_row(st, "Green Scale", 100, 0, 200),
+            slider_row(st, "Blue Scale", 100, 0, 200),
         ],
     )
 
@@ -562,10 +578,10 @@ def main(page: ft.Page):
         expanded=False,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            slider_row("Clarity", 0, -100, 100),
-            slider_row("Vignette", 0, 0, 100),
-            slider_row("Blur", 0, 0, 20),
-            slider_row("Sharpen", 0, 0, 100),
+            slider_row(st, "Clarity", 0, -100, 100),
+            slider_row(st, "Vignette", 0, 0, 100),
+            slider_row(st, "Blur", 0, 0, 20),
+            slider_row(st, "Sharpen", 0, 0, 100),
         ],
     )
 
@@ -576,10 +592,10 @@ def main(page: ft.Page):
         expanded=False,
         controls_padding=ft.Padding.symmetric(horizontal=10),
         controls=[
-            toggle_row("Flip H"),
-            toggle_row("Flip V"),
-            toggle_row("Grayscale"),
-            toggle_row("Auto Select"),
+            toggle_row(st, "Flip H"),
+            toggle_row(st, "Flip V"),
+            toggle_row(st, "Grayscale"),
+            toggle_row(st, "Auto Select"),
         ],
     )
 

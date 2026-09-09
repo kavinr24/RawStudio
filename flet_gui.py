@@ -43,11 +43,12 @@ preview = None
 _page = None
 _picker = None
 canvas_image = None
-canvas_wrap = None
+canvas_viewer = None
 placeholder = None
 histogram_image = None
 rotation_angle = 0
-zoom_level = 1.0
+_canvas_w = 0.0
+_canvas_h = 0.0
 _render_busy = False
 _render_pending = False
 
@@ -189,7 +190,7 @@ async def apply_adjustments():
 async def _on_slider(e, value_text):
     value_text.value = f"{e.control.value:.0f}"
     if _page is not None:
-        _page.update()
+        _page.update(value_text)
 
 
 async def _on_slider_end(e, value_text):
@@ -259,33 +260,59 @@ def toggle_row(label):
     )
 
 
-def _apply_zoom():
-    if _page is not None and canvas_wrap is not None:
-        canvas_wrap.scale = zoom_level
-        _page.update()
+def _fit_image_box():
+    global canvas_image, canvas_viewer
+    img = preview if preview is not None else original
+    if img is None or canvas_image is None or _canvas_w <= 0 or _canvas_h <= 0:
+        return
+    h, w = img.shape[:2]
+    s = min(_canvas_w / w, _canvas_h / h)
+    iw = max(1, int(round(w * s)))
+    ih = max(1, int(round(h * s)))
+    m = max((_canvas_w - iw) / 2, (_canvas_h - ih) / 2) * 1.1
+    canvas_image.width = iw
+    canvas_image.height = ih
+    to_update = [canvas_image]
+    if canvas_viewer is not None:
+        canvas_viewer.boundary_margin = ft.Margin.all(m)
+        to_update.append(canvas_viewer)
+    if _page is not None:
+        _page.update(*to_update)
+
+
+async def _on_canvas_size(e):
+    global _canvas_w, _canvas_h
+    _canvas_w = e.width or 0
+    _canvas_h = e.height or 0
+    if canvas_viewer is not None:
+        await canvas_viewer.reset()
+    _fit_image_box()
 
 
 async def zoom_in_clicked(e):
-    global zoom_level
-    zoom_level = min(zoom_level * 1.25, 8.0)
-    _apply_zoom()
+    if canvas_viewer is not None:
+        await canvas_viewer.zoom(1.25)
 
 
 async def zoom_out_clicked(e):
-    global zoom_level
-    zoom_level = max(zoom_level / 1.25, 0.1)
-    _apply_zoom()
+    if canvas_viewer is not None:
+        await canvas_viewer.zoom(0.8)
 
 
 async def rotate_clicked(e):
     global rotation_angle
     rotation_angle = (rotation_angle + 90) % 360
+    if canvas_viewer is not None:
+        await canvas_viewer.reset()
+    _fit_image_box()
     await apply_adjustments()
 
 
 async def reset_clicked(e):
     global rotation_angle
     rotation_angle = 0
+    if canvas_viewer is not None:
+        await canvas_viewer.reset()
     for label, value in RESET_VALUES.items():
         controls[label].value = value
     for label in Toggles:
@@ -308,6 +335,7 @@ async def open_clicked(e):
         if img is not None:
             original = img
             preview = create_preview(original)
+            _fit_image_box()
             await reset_clicked(None)
 
 
@@ -325,7 +353,7 @@ async def save_clicked(e):
 
 
 def main(page: ft.Page):
-    global _page, _picker, canvas_image, canvas_wrap, placeholder, histogram_image
+    global _page, _picker, canvas_image, canvas_viewer, placeholder, histogram_image
     _page = page
 
     page.title = "RawStudio"
@@ -433,40 +461,27 @@ def main(page: ft.Page):
     canvas_image = ft.Image(
         src=TRANSPARENT_PNG,
         fit=ft.BoxFit.CONTAIN,
-        expand=True,
-        visible=False,
     )
 
-    canvas_wrap = ft.Container(
+    canvas_viewer = ft.InteractiveViewer(
         expand=True,
-        alignment=ft.Alignment.CENTER,
-        scale=zoom_level,
+        min_scale=1.0,
+        max_scale=8.0,
+        constrained=False,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
         content=canvas_image,
     )
 
     canvas_container = ft.Container(
         expand=True,
         bgcolor=BG_DARK,
-        alignment=ft.Alignment.CENTER,
         clip_behavior=ft.ClipBehavior.HARD_EDGE,
+        on_size_change=_on_canvas_size,
         content=ft.Stack(
+            expand=True,
             controls=[
                 placeholder,
-                canvas_wrap,
-                ft.Container(
-                    alignment=ft.Alignment.TOP_LEFT,
-                    padding=12,
-                    content=ft.Container(
-                        bgcolor="#AA000000",
-                        padding=ft.Padding.all(6),
-                        border_radius=4,
-                        content=ft.Text(
-                            "ISO 100  f/2.8  1/1000s  85mm",
-                            color="#FFFFFF",
-                            size=10,
-                        ),
-                    ),
-                ),
+                canvas_viewer,
             ],
         ),
     )

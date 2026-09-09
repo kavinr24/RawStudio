@@ -18,6 +18,9 @@ from processor import (
 
 _log = logging.getLogger("rawstudio")
 
+logging.getLogger("flet_web").setLevel(logging.ERROR)
+logging.getLogger("flet_runtime").setLevel(logging.ERROR)
+
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
 MAX_PIXELS = 40_000_000
 
@@ -691,9 +694,7 @@ def main(page: ft.Page):
         border=ft.Border.only(top=ft.BorderSide(1, BORDER_COLOR)),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.END,
-            controls=[
-                ft.Text("6000 x 4000", size=10, color=TEXT_MUTED),
-            ],
+            controls=[],
         ),
     )
 
@@ -718,7 +719,9 @@ def main(page: ft.Page):
     )
 
 
-app = ft.run(main, export_asgi_app=True)
+_assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+
+app = ft.run(main, export_asgi_app=True, assets_dir=_assets_dir)
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main, assets_dir=_assets_dir)

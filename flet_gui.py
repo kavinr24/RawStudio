@@ -645,9 +645,8 @@ def main(page: ft.Page):
         padding=ft.Padding.symmetric(horizontal=12),
         border=ft.Border.only(top=ft.BorderSide(1, BORDER_COLOR)),
         content=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            alignment=ft.MainAxisAlignment.END,
             controls=[
-                ft.Text("Ready", size=10, color=TEXT_MUTED),
                 ft.Text("6000 x 4000", size=10, color=TEXT_MUTED),
             ],
         ),

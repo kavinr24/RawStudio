@@ -70,9 +70,7 @@ def img_to_data_uri(img, png=False):
     if img is None:
         return ""
     if len(img.shape) == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     if png:
         ok, buf = cv2.imencode(".png", img)
     else:
